@@ -84,6 +84,11 @@ def get_orders(buscar: str | None = None) -> pd.DataFrame:
     conn = get_conn()
     df = pd.read_sql(q, conn, params=params)
     conn.close()
+
+    # Formatear cliente: si es numérico y entero, mostrar sin .0
+    df["CLIENTE"] = df["CLIENTE"].apply(
+        lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
+    )
     return df
 
 def get_order_items(numero: int) -> pd.DataFrame:
@@ -108,8 +113,14 @@ def get_order_items(numero: int) -> pd.DataFrame:
         .str.upper()
         .replace({"": "N"})
     )
-    # Sacar decimales si son enteros
-    df["CANTIDAD"] = df["CANTIDAD"].apply(lambda x: int(x) if float(x).is_integer() else x)
+    # Formatear cliente
+    df["CLIENTE"] = df["CLIENTE"].apply(
+        lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
+    )
+    # Formatear cantidad
+    df["CANTIDAD"] = df["CANTIDAD"].apply(
+        lambda x: int(x) if isinstance(x, (int, float)) and float(x).is_integer() else x
+    )
     return df
 
 def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
@@ -234,7 +245,7 @@ def page_detail():
             try:
                 updates = []
                 for _, r in items_df.iterrows():
-                    logical_key = f"pick_{numero}_{r['CODIGO']}"
+                    logical_key = f"pick_{numero}_{r["CODIGO"]}"
                     flag = "Y" if st.session_state[logical_key] else "N"
                     updates.append((str(r["CODIGO"]), flag))
                 update_picking_bulk(numero, updates)
