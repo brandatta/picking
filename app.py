@@ -28,7 +28,8 @@ h1, h2, h3 {
 .card .stButton>button { width: 100%; border-radius: 8px; padding: 6px 10px; }
 
 /* Botón verde para Confirmar */
-.stButton>button[kind="primary"], .stButton>button#confirm {
+.stButton>button#confirm,
+.stButton>button[kind="primary"] {
   background-color: #28a745 !important;
   color: white !important;
   border: none !important;
@@ -44,13 +45,38 @@ h1, h2, h3 {
 .detail-head { font-weight: 600; opacity: 0.9; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
 
-/* Botón visual Picking */
-.picking-btn {
-  display:inline-block; border:1px solid #d9d9d9; border-radius:8px;
-  padding:6px 12px; min-width:90px; text-align:center; cursor:pointer;
-  font-weight:500;
+/* ==== Checkbox "Picking" con look de botón (blanco -> verde al marcar) ==== */
+/* Ocultar el cuadradito del checkbox nativo de Streamlit */
+.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"] {
+  display: none;
 }
-.picking-btn.active { background:#28a745; color:#fff; border-color:#28a745; }
+/* Botón blanco por defecto */
+.pick-scope [data-testid="stCheckbox"] > label {
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  background: #fff;
+  min-width: 100px;
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  font-weight: 500;
+  color: #333;
+}
+/* Cuando está marcado (Streamlit pone aria-checked="true" en ese DIV interno) -> verde */
+.pick-scope [data-testid="stCheckbox"]:has(> div[role="checkbox"][aria-checked="true"]) > label {
+  background: #28a745;
+  border-color: #28a745;
+  color: #fff;
+}
+
+/* Barra inferior fija */
+.confirm-bar {
+  position: sticky; bottom: 0; background: #fafafa; border-top: 1px solid #eee;
+  padding: 12px; border-radius: 10px; margin-top: 16px;
+  z-index: 1;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -71,7 +97,7 @@ def get_orders(buscar: str | None = None) -> pd.DataFrame:
     where, params = [], []
     if buscar:
         where.append("(CAST(NUMERO AS CHAR) LIKE %s OR CLIENTE LIKE %s)")
-        params.extend([f"%{buscar}%", f"%{buscar}%"])
+        params.extend([f\"%{buscar}%\", f\"%{buscar}%\"])
     q = base + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY NUMERO DESC LIMIT 150"
     conn = get_conn()
     df = pd.read_sql(q, conn, params=params)
@@ -135,6 +161,7 @@ def page_list():
             row = orders_df.iloc[idx]
             numero, cliente = row.NUMERO, row.CLIENTE
 
+            # progreso de picking
             items = get_order_items(numero)
             total_items = len(items)
             picked = (items["PICKING"] == "Y").sum() if total_items > 0 else 0
@@ -199,6 +226,7 @@ def page_detail():
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
+            # Checkbox con look de botón (blanco->verde)
             st.markdown('<div class="pick-scope">', unsafe_allow_html=True)
             chk_key = f"chk_{key}"
             st.session_state.setdefault(chk_key, active)
