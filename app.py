@@ -23,12 +23,12 @@ st.markdown("""
 .detail-head { font-weight: 600; opacity: 0.9; padding: 6px 4px; border-bottom: 1px solid #f0f0f0; }
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 4px; }
 
-/* Botón visual de picking */
-.picking-wrap {
-  display: inline-block; border: 1px solid #d9d9d9; border-radius: 8px;
-  padding: 4px 10px; background: #fff;
+/* Botón visual de picking (se ve como botón y cambia a verde si activo) */
+.picking-btn {
+  display:inline-block; border:1px solid #d9d9d9; border-radius: 8px;
+  padding:6px 12px; background:#ffffff; font-weight:500; text-align:center; min-width:120px;
 }
-.picking-wrap.active { background: #d9f9d9; border-color: #97d897; font-weight: 600; }
+.picking-btn.active { background:#d9f9d9; border-color:#97d897; }
 
 /* Barra confirmar (pegada abajo) */
 .confirm-bar {
@@ -51,12 +51,6 @@ def get_conn():
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=30)
 def get_orders(buscar: str | None = None) -> pd.DataFrame:
-    """
-    Devuelve pedidos (NUMERO) únicos con su CLIENTE desde app_marco_new.sap
-    Campos:
-      - Nro Pedido = sap.NUMERO
-      - Cliente    = sap.CLIENTE
-    """
     base = "SELECT DISTINCT NUMERO, CLIENTE FROM sap"
     where, params = [], []
     if buscar:
@@ -69,12 +63,6 @@ def get_orders(buscar: str | None = None) -> pd.DataFrame:
     return df
 
 def get_order_items(numero: int) -> pd.DataFrame:
-    """
-    Detalle del pedido:
-      - SKU      = CODIGO
-      - Cantidad = CANTIDAD
-      - Picking  = PICKING ('N'|'Y')
-    """
     conn = get_conn()
     df = pd.read_sql(
         """
@@ -89,10 +77,6 @@ def get_order_items(numero: int) -> pd.DataFrame:
     return df
 
 def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
-    """
-    Actualiza PICKING para cada (CODIGO -> 'Y'/'N') dentro del pedido NUMERO.
-    sku_to_flag: [(codigo, 'Y'|'N'), ...]
-    """
     if not sku_to_flag:
         return
     conn = get_conn()
@@ -154,7 +138,6 @@ def page_detail():
             go("list")
         return
 
-    # Encabezado + volver
     left, right = st.columns([1,1])
     with left:
         st.title(f"🧾 Detalle Pedido #{numero}")
@@ -172,7 +155,7 @@ def page_detail():
     cliente = items_df["CLIENTE"].iloc[0]
     st.markdown(f"**Cliente:** {cliente}")
 
-    # Inicializar estado por SKU
+    # Inicializar estado por SKU (True = verde/Y)
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         if key not in st.session_state:
@@ -194,13 +177,12 @@ def page_detail():
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
+            # Botón VISUAL (verde si activo) + botón funcional para alternar (siempre dice "Picking")
             st.markdown(
-                f'<div class="picking-wrap {"active" if active else ""}">'
-                f'{"✔ Seleccionado" if active else "Marcar picking"}'
-                f'</div>',
+                f'<div class="picking-btn {"active" if active else ""}">Picking</div>',
                 unsafe_allow_html=True
             )
-            if st.button(("Quitar" if active else "Marcar"), key=f"btn_{key}"):
+            if st.button("Picking", key=f"btn_{key}"):
                 st.session_state[key] = not st.session_state[key]
 
     # Confirmar / Desmarcar
