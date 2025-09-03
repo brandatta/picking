@@ -40,7 +40,9 @@ h1, h2, h3 {
 }
 .pick-scope div[data-testid="stCheckbox"] input:checked + div[role=checkbox] + label,
 .pick-scope div[data-testid="stCheckbox"] input:checked + label {
-  background:#d9f9d9; border-color:#97d897;
+  background:#28a745;  /* verde */
+  border-color:#28a745;
+  color: white;
 }
 
 /* Barra inferior fija */
@@ -48,6 +50,17 @@ h1, h2, h3 {
   position: sticky; bottom: 0; background: #fafafa; border-top: 1px solid #eee;
   padding: 12px; border-radius: 10px; margin-top: 16px;
   z-index: 1;
+}
+
+/* ==== Botones Streamlit verdes ==== */
+.stButton>button {
+  background-color: #28a745 !important;
+  color: white !important;
+  border: none !important;
+}
+.stButton>button:hover {
+  background-color: #218838 !important;
+  color: white !important;
 }
 </style>
 """, unsafe_allow_html=True)
