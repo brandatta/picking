@@ -27,7 +27,7 @@ h1, h2, h3 {
 .card small { color: #666; }
 .card .stButton>button { width: 100%; border-radius: 8px; padding: 6px 10px; }
 
-/* Botones Streamlit: colores */
+/* Botones Streamlit: colores según "type" */
 .stButton>button[kind="primary"] {                 /* VERDE (activo) */
   background-color: #28a745 !important;
   color: #fff !important;
@@ -98,6 +98,16 @@ def get_order_items(numero: int) -> pd.DataFrame:
         conn, params=[numero]
     )
     conn.close()
+
+    # Normalizar PICKING: None/"" -> "N", mayúsculas
+    df["PICKING"] = (
+        df["PICKING"]
+        .fillna("N")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .replace({"": "N"})
+    )
     return df
 
 def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
@@ -145,7 +155,7 @@ def page_list():
 
             items = get_order_items(numero)
             total_items = len(items)
-            picked = (items["PICKING"].str.upper() == "Y").sum() if total_items > 0 else 0
+            picked = (items["PICKING"] == "Y").sum() if total_items > 0 else 0
             pct = int((picked / total_items) * 100) if total_items > 0 else 0
 
             with col:
@@ -186,12 +196,11 @@ def page_detail():
     cliente = items_df["CLIENTE"].iloc[0]
     st.markdown(f"**Cliente:** {cliente}")
 
-    # Inicializar estado
+    # Inicializar estado: True si Y, False si N
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
-        val = str(r["PICKING"]).strip().upper()
         if key not in st.session_state:
-            st.session_state[key] = (val == "Y")
+            st.session_state[key] = (r["PICKING"] == "Y")
 
     # Cabecera
     hc1, hc2, hc3 = st.columns([5,2,3])
@@ -199,7 +208,7 @@ def page_detail():
     with hc2: st.markdown('<div class="detail-head" style="text-align:right;">Cantidad</div>', unsafe_allow_html=True)
     with hc3: st.markdown('<div class="detail-head">Picking</div>', unsafe_allow_html=True)
 
-    # Filas con botones Picking
+    # Filas con botones Picking (toggle inmediato)
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
@@ -210,14 +219,11 @@ def page_detail():
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
-            clicked = st.button(
-                "Picking",
-                key=f"btn_{key}",
-                type=("primary" if active else "secondary"),
-                use_container_width=True
-            )
-            if clicked:
-                st.session_state[key] = not active  # toggle inmediato
+            btn_type = "primary" if active else "secondary"  # verde si activo, blanco si no
+            if st.button("Picking", key=f"btn_{key}", type=btn_type, use_container_width=True):
+                # Toggle de estado y rerender inmediato
+                st.session_state[key] = not active
+                st.rerun()
 
     # Barra inferior
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
