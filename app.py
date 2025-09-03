@@ -108,6 +108,8 @@ def get_order_items(numero: int) -> pd.DataFrame:
         .str.upper()
         .replace({"": "N"})
     )
+    # Sacar decimales si son enteros
+    df["CANTIDAD"] = df["CANTIDAD"].apply(lambda x: int(x) if float(x).is_integer() else x)
     return df
 
 def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
