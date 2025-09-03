@@ -45,24 +45,47 @@ h1, h2, h3 {
 .detail-head { font-weight: 600; opacity: 0.9; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
 
-/* Botón Picking */
-.stButton>button.picking-off {
-  background-color: #fff !important;
-  color: #333 !important;
-  border: 1px solid #d9d9d9 !important;
+/* ====== "BOTÓN" PICKING SIN JS ======
+   - Usamos el propio div[role="checkbox"] de Streamlit como botón
+   - Ocultamos el label y dibujamos el texto "Picking" con ::after
+   - Cambiamos colores según aria-checked (estado real del checkbox)
+*/
+.pick-scope [data-testid="stCheckbox"] > label {  /* ocultamos el label nativo */
+  display: none !important;
 }
-.stButton>button.picking-off:hover {
-  background-color: #f0f0f0 !important;
-  color: #000 !important;
+
+.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"] {
+  display: inline-block;
+  min-width: 110px;
+  padding: 8px 14px;
+  border: 1px solid #d9d9d9;
+  border-radius: 8px;
+  background: #ffffff;         /* blanco por defecto */
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  outline: none;               /* quita foco azul */
 }
-.stButton>button.picking-on {
-  background-color: #28a745 !important;
-  color: #fff !important;
-  border: 1px solid #28a745 !important;
+
+/* Texto "Picking" dentro del botón */
+.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"]::after {
+  content: "Picking";
+  font-weight: 600;
+  color: #333;                 /* texto oscuro por defecto */
 }
-.stButton>button.picking-on:hover {
-  background-color: #218838 !important;
-  color: #fff !important;
+
+/* Hover (opcional) */
+.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"]:hover {
+  background: #f6f6f6;
+}
+
+/* Estado activo = VERDE */
+.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"][aria-checked="true"] {
+  background: #28a745 !important;
+  border-color: #28a745 !important;
+}
+.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"][aria-checked="true"]::after {
+  color: #ffffff !important;
 }
 
 /* Barra inferior fija */
@@ -155,6 +178,7 @@ def page_list():
             row = orders_df.iloc[idx]
             numero, cliente = row.NUMERO, row.CLIENTE
 
+            # progreso de picking
             items = get_order_items(numero)
             total_items = len(items)
             picked = (items["PICKING"] == "Y").sum() if total_items > 0 else 0
@@ -219,18 +243,13 @@ def page_detail():
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
-            # Botón que cambia de blanco a verde
-            btn_class = "picking-on" if active else "picking-off"
-            if st.button("Picking", key=f"btn_{key}", help="Marcar como picking", type="secondary"):
-                st.session_state[key] = not active
-            st.markdown(
-                f"<style>div.stButton > button#btn_{key} {{}} </style>",
-                unsafe_allow_html=True
-            )
-            st.markdown(
-                f"<script>document.querySelector('button[kind][data-testid=\"stWidgetStButton\"][id=\"btn_{key}\"]').classList.add('{btn_class}');</script>",
-                unsafe_allow_html=True
-            )
+            # "Botón" Picking (realmente el div del checkbox, sin JS)
+            st.markdown('<div class="pick-scope">', unsafe_allow_html=True)
+            chk_key = f"chk_{key}"
+            st.session_state.setdefault(chk_key, active)
+            checked = st.checkbox("", key=chk_key)  # sin texto; el texto lo dibuja el ::after
+            st.session_state[key] = checked
+            st.markdown('</div>', unsafe_allow_html=True)
 
     # Barra inferior
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
