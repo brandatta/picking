@@ -99,7 +99,7 @@ def get_order_items(numero: int) -> pd.DataFrame:
     )
     conn.close()
 
-    # Normalizar PICKING: None/"" -> "N", mayúsculas
+    # Normalizar PICKING
     df["PICKING"] = (
         df["PICKING"]
         .fillna("N")
@@ -196,7 +196,7 @@ def page_detail():
     cliente = items_df["CLIENTE"].iloc[0]
     st.markdown(f"**Cliente:** {cliente}")
 
-    # Inicializar estado: True si Y, False si N
+    # Inicializar estado
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         if key not in st.session_state:
@@ -208,7 +208,7 @@ def page_detail():
     with hc2: st.markdown('<div class="detail-head" style="text-align:right;">Cantidad</div>', unsafe_allow_html=True)
     with hc3: st.markdown('<div class="detail-head">Picking</div>', unsafe_allow_html=True)
 
-    # Filas con botones Picking (toggle inmediato)
+    # Filas con botones Picking
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
@@ -219,9 +219,8 @@ def page_detail():
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
-            btn_type = "primary" if active else "secondary"  # verde si activo, blanco si no
+            btn_type = "primary" if active else "secondary"
             if st.button("Picking", key=f"btn_{key}", type=btn_type, use_container_width=True):
-                # Toggle de estado y rerender inmediato
                 st.session_state[key] = not active
                 st.rerun()
 
@@ -239,6 +238,8 @@ def page_detail():
                 update_picking_bulk(numero, updates)
                 st.success("Picking actualizado correctamente.")
                 st.cache_data.clear()
+                go("list")
+                st.rerun()
             except Exception as e:
                 st.error(f"Error al actualizar: {e}")
     st.markdown('</div>', unsafe_allow_html=True)
