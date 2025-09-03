@@ -130,7 +130,7 @@ def page_list():
     st.title("📦 Pedidos (SAP)")
     c1, _ = st.columns([2,1])
     with c1:
-        buscar = st.text_input("Buscar por cliente o número de pedido", placeholder="Ej: DIA o 100023120")
+        buscar = st.text_input("Buscar por cliente o número de pedido")
     orders_df = get_orders(buscar=buscar)
 
     st.subheader("Resultados")
