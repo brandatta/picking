@@ -27,66 +27,31 @@ h1, h2, h3 {
 .card small { color: #666; }
 .card .stButton>button { width: 100%; border-radius: 8px; padding: 6px 10px; }
 
-/* Botón verde para Confirmar */
-.stButton>button#confirm,
-.stButton>button[kind="primary"] {
+/* Botones Streamlit: colores */
+.stButton>button[kind="primary"] {                 /* VERDE (activo) */
   background-color: #28a745 !important;
-  color: white !important;
-  border: none !important;
-  border-radius: 8px !important;
-  padding: 6px 12px !important;
+  color: #fff !important;
+  border: 1px solid #28a745 !important;
 }
-.stButton>button:hover {
+.stButton>button[kind="primary"]:hover {
   background-color: #218838 !important;
-  color: white !important;
+  border-color: #218838 !important;
+}
+
+.stButton>button[kind="secondary"] {               /* BLANCO (inactivo) */
+  background-color: #ffffff !important;
+  color: #333 !important;
+  border: 1px solid #d9d9d9 !important;
+}
+.stButton>button[kind="secondary"]:hover {
+  background-color: #f5f5f5 !important;
+  color: #000 !important;
+  border-color: #cfcfcf !important;
 }
 
 /* Cabecera y filas */
 .detail-head { font-weight: 600; opacity: 0.9; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
-
-/* ====== "BOTÓN" PICKING SIN JS ======
-   - Usamos el propio div[role="checkbox"] de Streamlit como botón
-   - Ocultamos el label y dibujamos el texto "Picking" con ::after
-   - Cambiamos colores según aria-checked (estado real del checkbox)
-*/
-.pick-scope [data-testid="stCheckbox"] > label {  /* ocultamos el label nativo */
-  display: none !important;
-}
-
-.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"] {
-  display: inline-block;
-  min-width: 110px;
-  padding: 8px 14px;
-  border: 1px solid #d9d9d9;
-  border-radius: 8px;
-  background: #ffffff;         /* blanco por defecto */
-  cursor: pointer;
-  user-select: none;
-  position: relative;
-  outline: none;               /* quita foco azul */
-}
-
-/* Texto "Picking" dentro del botón */
-.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"]::after {
-  content: "Picking";
-  font-weight: 600;
-  color: #333;                 /* texto oscuro por defecto */
-}
-
-/* Hover (opcional) */
-.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"]:hover {
-  background: #f6f6f6;
-}
-
-/* Estado activo = VERDE */
-.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"][aria-checked="true"] {
-  background: #28a745 !important;
-  border-color: #28a745 !important;
-}
-.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"][aria-checked="true"]::after {
-  color: #ffffff !important;
-}
 
 /* Barra inferior fija */
 .confirm-bar {
@@ -222,17 +187,19 @@ def page_detail():
     cliente = items_df["CLIENTE"].iloc[0]
     st.markdown(f"**Cliente:** {cliente}")
 
-    # Inicializar estado
+    # Inicializar estado por SKU (True => activo/verde)
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         if key not in st.session_state:
             st.session_state[key] = (str(r["PICKING"]).upper() == "Y")
 
+    # Cabecera columnas
     hc1, hc2, hc3 = st.columns([5,2,3])
     with hc1: st.markdown('<div class="detail-head">SKU</div>', unsafe_allow_html=True)
     with hc2: st.markdown('<div class="detail-head" style="text-align:right;">Cantidad</div>', unsafe_allow_html=True)
     with hc3: st.markdown('<div class="detail-head">Picking</div>', unsafe_allow_html=True)
 
+    # Filas
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
@@ -243,19 +210,21 @@ def page_detail():
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
-            # "Botón" Picking (realmente el div del checkbox, sin JS)
-            st.markdown('<div class="pick-scope">', unsafe_allow_html=True)
-            chk_key = f"chk_{key}"
-            st.session_state.setdefault(chk_key, active)
-            checked = st.checkbox("", key=chk_key)  # sin texto; el texto lo dibuja el ::after
-            st.session_state[key] = checked
-            st.markdown('</div>', unsafe_allow_html=True)
+            # Botón REAL: blanco (secondary) -> verde (primary) según estado
+            clicked = st.button(
+                "Picking",
+                key=f"btn_{key}",
+                type=("primary" if active else "secondary"),
+                use_container_width=True
+            )
+            if clicked:
+                st.session_state[key] = not active  # toggle inmediato
 
     # Barra inferior
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
     ccf, _, _ = st.columns([1,1,2])
     with ccf:
-        if st.button("Confirmar cambios", key="confirm", use_container_width=True):
+        if st.button("Confirmar cambios", key="confirm", use_container_width=True, type="primary"):
             try:
                 updates = []
                 for _, r in items_df.iterrows():
