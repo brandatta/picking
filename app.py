@@ -8,9 +8,17 @@ st.set_page_config(page_title="Picking - Pedidos (SAP)", layout="wide")
 # ================== ESTILOS ==================
 st.markdown("""
 <style>
-.block-container { padding-top: 1rem; }
+.block-container { padding-top: 2.5rem !important; }
 
-/* Tarjetas */
+/* Evitar que se corte el título */
+h1, h2, h3 {
+  margin-top: 0.2rem !important;
+  margin-bottom: 0.8rem !important;
+  line-height: 1.2 !important;
+  white-space: normal !important;
+}
+
+/* Tarjetas en la lista */
 .card {
   border: 1px solid #e9e9e9; border-radius: 12px; padding: 12px 14px;
   box-shadow: 0 2px 10px rgba(0,0,0,0.04); background: #fff; height: 100%;
@@ -27,7 +35,7 @@ st.markdown("""
 .pick-scope div[data-testid="stCheckbox"] input { display: none; }
 .pick-scope div[data-testid="stCheckbox"] label {
   display:inline-block; padding:6px 12px; border:1px solid #d9d9d9;
-  border-radius:8px; background:#fff; min-width:100px; text-align:center;
+  border-radius:8px; background:#fff; min-width:90px; text-align:center;
   cursor:pointer; user-select:none; font-weight:500;
 }
 .pick-scope div[data-testid="stCheckbox"] input:checked + div[role=checkbox] + label,
@@ -38,7 +46,8 @@ st.markdown("""
 /* Barra inferior fija */
 .confirm-bar {
   position: sticky; bottom: 0; background: #fafafa; border-top: 1px solid #eee;
-  padding: 10px; border-radius: 10px; margin-top: 12px;
+  padding: 12px; border-radius: 10px; margin-top: 16px;
+  z-index: 1;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -151,7 +160,7 @@ def page_detail():
             go("list")
         return
 
-    left, right = st.columns([1,1])
+    left, right = st.columns([3,1])
     with left:
         st.title(f"🧾 Detalle Pedido #{numero}")
     with right:
@@ -188,7 +197,6 @@ def page_detail():
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
-            # Botón estilo "Picking"
             st.markdown('<div class="pick-scope">', unsafe_allow_html=True)
             chk_key = f"chk_{key}"
             st.session_state.setdefault(chk_key, active)
