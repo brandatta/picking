@@ -45,18 +45,24 @@ h1, h2, h3 {
 .detail-head { font-weight: 600; opacity: 0.9; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
 
-/* ==== Checkbox "Picking" con look de botón (blanco -> verde) ==== */
-.pick-scope [data-testid="stCheckbox"] > div[role="checkbox"] {
-  display: none;
+/* Botón Picking */
+.stButton>button.picking-off {
+  background-color: #fff !important;
+  color: #333 !important;
+  border: 1px solid #d9d9d9 !important;
 }
-.pick-scope [data-testid="stCheckbox"] > label {
-  display:inline-block; padding:6px 12px; border:1px solid #d9d9d9;
-  border-radius:8px; background:#fff;
-  min-width:100px; text-align:center; cursor:pointer;
-  user-select:none; font-weight:500; color:#333;
+.stButton>button.picking-off:hover {
+  background-color: #f0f0f0 !important;
+  color: #000 !important;
 }
-.pick-scope [data-testid="stCheckbox"]:has(> div[role="checkbox"][aria-checked="true"]) > label {
-  background:#28a745; border-color:#28a745; color:#fff;
+.stButton>button.picking-on {
+  background-color: #28a745 !important;
+  color: #fff !important;
+  border: 1px solid #28a745 !important;
+}
+.stButton>button.picking-on:hover {
+  background-color: #218838 !important;
+  color: #fff !important;
 }
 
 /* Barra inferior fija */
@@ -213,12 +219,18 @@ def page_detail():
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
-            st.markdown('<div class="pick-scope">', unsafe_allow_html=True)
-            chk_key = f"chk_{key}"
-            st.session_state.setdefault(chk_key, active)
-            checked = st.checkbox("Picking", key=chk_key)
-            st.session_state[key] = checked
-            st.markdown('</div>', unsafe_allow_html=True)
+            # Botón que cambia de blanco a verde
+            btn_class = "picking-on" if active else "picking-off"
+            if st.button("Picking", key=f"btn_{key}", help="Marcar como picking", type="secondary"):
+                st.session_state[key] = not active
+            st.markdown(
+                f"<style>div.stButton > button#btn_{key} {{}} </style>",
+                unsafe_allow_html=True
+            )
+            st.markdown(
+                f"<script>document.querySelector('button[kind][data-testid=\"stWidgetStButton\"][id=\"btn_{key}\"]').classList.add('{btn_class}');</script>",
+                unsafe_allow_html=True
+            )
 
     # Barra inferior
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
