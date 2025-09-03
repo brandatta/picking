@@ -5,7 +5,7 @@ import mysql.connector
 # ================== CONFIG ==================
 st.set_page_config(page_title="Picking - Pedidos (SAP)", layout="wide")
 
-# ================== ESTILOS (checkbox -> botón verde/blanco) ==================
+# ================== ESTILOS ==================
 st.markdown("""
 <style>
 .block-container { padding-top: 0.75rem; }
@@ -23,23 +23,19 @@ st.markdown("""
 .detail-head { font-weight: 600; opacity: 0.9; padding: 6px 4px; border-bottom: 1px solid #f0f0f0; }
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 4px; }
 
-/* ---- Estilo del checkbox "Picking" dentro del scope .pick-scope ---- */
+/* Checkbox estilizado como botón */
 .pick-scope div[data-testid="stCheckbox"] input { display: none; }
-
-/* Contenedor de etiqueta tipo botón */
 .pick-scope div[data-testid="stCheckbox"] label {
   display:inline-block; padding:6px 12px; border:1px solid #d9d9d9;
-  border-radius:8px; background:#fff; min-width:120px; text-align:center;
+  border-radius:8px; background:#fff; min-width:100px; text-align:center;
   cursor:pointer; user-select:none; font-weight:500;
 }
-
-/* Estado marcado = verde */
 .pick-scope div[data-testid="stCheckbox"] input:checked + div[role="checkbox"] + label,
 .pick-scope div[data-testid="stCheckbox"] input:checked + label {
   background:#d9f9d9; border-color:#97d897;
 }
 
-/* Barra confirmar (pegada abajo) */
+/* Barra confirmar */
 .confirm-bar {
   position: sticky; bottom: 0; background: #fafafa; border-top: 1px solid #eee;
   padding: 10px; border-radius: 10px; margin-top: 8px;
@@ -60,12 +56,6 @@ def get_conn():
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=30)
 def get_orders(buscar: str | None = None) -> pd.DataFrame:
-    """
-    Pedidos únicos con su cliente desde app_marco_new.sap
-    Campos:
-      - Nro Pedido = sap.NUMERO
-      - Cliente    = sap.CLIENTE
-    """
     base = "SELECT DISTINCT NUMERO, CLIENTE FROM sap"
     where, params = [], []
     if buscar:
@@ -78,12 +68,6 @@ def get_orders(buscar: str | None = None) -> pd.DataFrame:
     return df
 
 def get_order_items(numero: int) -> pd.DataFrame:
-    """
-    Detalle del pedido:
-      - SKU      = CODIGO
-      - Cantidad = CANTIDAD
-      - Picking  = PICKING ('N'|'Y')
-    """
     conn = get_conn()
     df = pd.read_sql(
         """
@@ -98,10 +82,6 @@ def get_order_items(numero: int) -> pd.DataFrame:
     return df
 
 def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
-    """
-    Actualiza PICKING para cada (CODIGO -> 'Y'/'N') dentro del pedido NUMERO.
-    sku_to_flag: [(codigo, 'Y'|'N'), ...]
-    """
     if not sku_to_flag:
         return
     conn = get_conn()
@@ -116,7 +96,7 @@ def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
 
 # ================== STATE (router simple) ==================
 if "page" not in st.session_state:
-    st.session_state.page = "list"  # "list" | "detail"
+    st.session_state.page = "list"
 if "selected_pedido" not in st.session_state:
     st.session_state.selected_pedido = None
 
@@ -142,14 +122,27 @@ def page_list():
         for col in cols:
             if idx >= total: break
             row = orders_df.iloc[idx]
+            numero, cliente = row.NUMERO, row.CLIENTE
+
+            # calcular % picking
+            items = get_order_items(numero)
+            total_items = len(items)
+            if total_items > 0:
+                picked = (items["PICKING"] == "Y").sum()
+                pct = int((picked / total_items) * 100)
+            else:
+                picked, pct = 0, 0
+
             with col:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
                 st.markdown(f"""
-                    <h4>Pedido #{row.NUMERO}</h4>
-                    <div><small>Cliente:</small> <b>{row.CLIENTE}</b></div>
+                    <h4>Pedido #{numero}</h4>
+                    <div><small>Cliente:</small> <b>{cliente}</b></div>
                 """, unsafe_allow_html=True)
-                if st.button("Ver detalle", key=f"open_{row.NUMERO}"):
-                    st.session_state.selected_pedido = int(row.NUMERO)
+                st.progress(pct/100)
+                st.caption(f"Picking: {picked}/{total_items} ({pct}%)")
+                if st.button("Ver detalle", key=f"open_{numero}"):
+                    st.session_state.selected_pedido = int(numero)
                     go("detail")
                 st.markdown("</div>", unsafe_allow_html=True)
             idx += 1
@@ -180,43 +173,36 @@ def page_detail():
     cliente = items_df["CLIENTE"].iloc[0]
     st.markdown(f"**Cliente:** {cliente}")
 
-    # Inicializar estado lógico por SKU (True=Y/verde)
+    # inicializar estado
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         if key not in st.session_state:
             st.session_state[key] = (str(r["PICKING"]).upper() == "Y")
 
-    # Cabecera
-    hc1, hc2, hc3 = st.columns([5, 2, 3])
+    hc1, hc2, hc3 = st.columns([5,2,3])
     with hc1: st.markdown('<div class="detail-head">SKU</div>', unsafe_allow_html=True)
     with hc2: st.markdown('<div class="detail-head" style="text-align:right;">Cantidad</div>', unsafe_allow_html=True)
     with hc3: st.markdown('<div class="detail-head">Picking</div>', unsafe_allow_html=True)
 
-    # Filas
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
-
-        c1, c2, c3 = st.columns([5, 2, 3])
+        c1, c2, c3 = st.columns([5,2,3])
         with c1:
             st.markdown(f'<div class="detail-row">{r["CODIGO"]}</div>', unsafe_allow_html=True)
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
-            # Checkbox estilizado como botón (scope para css)
             st.markdown('<div class="pick-scope">', unsafe_allow_html=True)
             chk_key = f"chk_{key}"
-            # Inicializar el checkbox con el estado actual
-            if chk_key not in st.session_state:
-                st.session_state[chk_key] = active
+            st.session_state.setdefault(chk_key, active)
             checked = st.checkbox("Picking", key=chk_key)
-            # Sincronizar estado lógico
             st.session_state[key] = checked
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # Confirmar / Desmarcar
+    # barra inferior
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
-    ccf, ccd, _ = st.columns([1,1,2])
+    ccf, _, _ = st.columns([1,1,2])
     with ccf:
         if st.button("Confirmar cambios", type="primary", use_container_width=True, key="confirm"):
             try:
@@ -227,16 +213,10 @@ def page_detail():
                     updates.append((str(r["CODIGO"]), flag))
                 update_picking_bulk(numero, [(codigo, flag) for (codigo, flag) in updates])
                 st.success("Picking actualizado correctamente.")
-                st.cache_data.clear()  # refresca caches de lecturas
+                st.cache_data.clear()
             except Exception as e:
                 st.error(f"Error al actualizar: {e}")
-    with ccd:
-        if st.button("Desmarcar todo", use_container_width=True, key="clear_all"):
-            for _, r in items_df.iterrows():
-                st.session_state[f"pick_{numero}_{r['CODIGO']}"] = False
-                st.session_state[f"chk_pick_{numero}_{r['CODIGO']}"] = False if f"chk_pick_{numero}_{r['CODIGO']}" in st.session_state else False
-            st.info("Se desmarcaron todos los ítems.")
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_html=True)
 
 # ================== ROUTER ==================
 if st.session_state.page == "list":
