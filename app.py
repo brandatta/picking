@@ -8,7 +8,7 @@ st.set_page_config(page_title="Picking - Pedidos (SAP)", layout="wide")
 # ================== ESTILOS ==================
 st.markdown("""
 <style>
-.block-container { padding-top: 0.75rem; }
+.block-container { padding-top: 1rem; }
 
 /* Tarjetas */
 .card {
@@ -20,8 +20,8 @@ st.markdown("""
 .card .stButton>button { width: 100%; border-radius: 8px; padding: 6px 10px; }
 
 /* Cabecera y filas del detalle */
-.detail-head { font-weight: 600; opacity: 0.9; padding: 6px 4px; border-bottom: 1px solid #f0f0f0; }
-.detail-row { border-bottom: 1px dashed #ececec; padding: 8px 4px; }
+.detail-head { font-weight: 600; opacity: 0.9; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+.detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
 
 /* Checkbox estilizado como botón */
 .pick-scope div[data-testid="stCheckbox"] input { display: none; }
@@ -30,15 +30,15 @@ st.markdown("""
   border-radius:8px; background:#fff; min-width:100px; text-align:center;
   cursor:pointer; user-select:none; font-weight:500;
 }
-.pick-scope div[data-testid="stCheckbox"] input:checked + div[role="checkbox"] + label,
+.pick-scope div[data-testid="stCheckbox"] input:checked + div[role=checkbox] + label,
 .pick-scope div[data-testid="stCheckbox"] input:checked + label {
   background:#d9f9d9; border-color:#97d897;
 }
 
-/* Barra confirmar */
+/* Barra inferior fija */
 .confirm-bar {
   position: sticky; bottom: 0; background: #fafafa; border-top: 1px solid #eee;
-  padding: 10px; border-radius: 10px; margin-top: 8px;
+  padding: 10px; border-radius: 10px; margin-top: 12px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -94,7 +94,7 @@ def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
     cur.close()
     conn.close()
 
-# ================== STATE (router simple) ==================
+# ================== STATE (router) ==================
 if "page" not in st.session_state:
     st.session_state.page = "list"
 if "selected_pedido" not in st.session_state:
@@ -103,7 +103,7 @@ if "selected_pedido" not in st.session_state:
 def go(page: str):
     st.session_state.page = page
 
-# ================== PÁGINA: LISTA DE PEDIDOS ==================
+# ================== PÁGINA: LISTA ==================
 def page_list():
     st.title("📦 Pedidos (SAP)")
     c1, _ = st.columns([2,1])
@@ -118,27 +118,22 @@ def page_list():
 
     n_cols, idx, total = 3, 0, len(orders_df)
     while idx < total:
-        cols = st.columns(n_cols)
+        cols = st.columns([1,1,1])
         for col in cols:
             if idx >= total: break
             row = orders_df.iloc[idx]
             numero, cliente = row.NUMERO, row.CLIENTE
 
-            # calcular % picking
+            # progreso de picking
             items = get_order_items(numero)
             total_items = len(items)
-            if total_items > 0:
-                picked = (items["PICKING"] == "Y").sum()
-                pct = int((picked / total_items) * 100)
-            else:
-                picked, pct = 0, 0
+            picked = (items["PICKING"] == "Y").sum() if total_items > 0 else 0
+            pct = int((picked / total_items) * 100) if total_items > 0 else 0
 
             with col:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
-                st.markdown(f"""
-                    <h4>Pedido #{numero}</h4>
-                    <div><small>Cliente:</small> <b>{cliente}</b></div>
-                """, unsafe_allow_html=True)
+                st.markdown(f"<h4>Pedido #{numero}</h4>", unsafe_allow_html=True)
+                st.markdown(f"<div><small>Cliente:</small> <b>{cliente}</b></div>", unsafe_allow_html=True)
                 st.progress(pct/100)
                 st.caption(f"Picking: {picked}/{total_items} ({pct}%)")
                 if st.button("Ver detalle", key=f"open_{numero}"):
@@ -147,7 +142,7 @@ def page_list():
                 st.markdown("</div>", unsafe_allow_html=True)
             idx += 1
 
-# ================== PÁGINA: DETALLE (FULL PAGE) ==================
+# ================== PÁGINA: DETALLE ==================
 def page_detail():
     numero = st.session_state.selected_pedido
     if not numero:
@@ -173,7 +168,7 @@ def page_detail():
     cliente = items_df["CLIENTE"].iloc[0]
     st.markdown(f"**Cliente:** {cliente}")
 
-    # inicializar estado
+    # Inicializar estado
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         if key not in st.session_state:
@@ -193,6 +188,7 @@ def page_detail():
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
+            # Botón estilo "Picking"
             st.markdown('<div class="pick-scope">', unsafe_allow_html=True)
             chk_key = f"chk_{key}"
             st.session_state.setdefault(chk_key, active)
@@ -200,7 +196,7 @@ def page_detail():
             st.session_state[key] = checked
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # barra inferior
+    # Barra inferior
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
     ccf, _, _ = st.columns([1,1,2])
     with ccf:
@@ -211,12 +207,12 @@ def page_detail():
                     logical_key = f"pick_{numero}_{r['CODIGO']}"
                     flag = "Y" if st.session_state[logical_key] else "N"
                     updates.append((str(r["CODIGO"]), flag))
-                update_picking_bulk(numero, [(codigo, flag) for (codigo, flag) in updates])
+                update_picking_bulk(numero, updates)
                 st.success("Picking actualizado correctamente.")
                 st.cache_data.clear()
             except Exception as e:
                 st.error(f"Error al actualizar: {e}")
-    st.markdown('</div>', unsafe_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ================== ROUTER ==================
 if st.session_state.page == "list":
