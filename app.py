@@ -27,31 +27,8 @@ h1, h2, h3 {
 .card small { color: #666; }
 .card .stButton>button { width: 100%; border-radius: 8px; padding: 6px 10px; }
 
-/* Cabecera y filas del detalle */
-.detail-head { font-weight: 600; opacity: 0.9; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
-.detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
-
-/* Estilo de checkbox -> botón Picking */
-.pick-scope div[data-testid="stCheckbox"] input { display: none; }
-.pick-scope div[data-testid="stCheckbox"] label {
-  display:inline-block; padding:6px 12px; border:1px solid #d9d9d9;
-  border-radius:8px; background:#fff; min-width:90px; text-align:center;
-  cursor:pointer; user-select:none; font-weight:500; color:#333;
-}
-.pick-scope div[data-testid="stCheckbox"] input:checked + div[role=checkbox] + label,
-.pick-scope div[data-testid="stCheckbox"] input:checked + label {
-  background:#28a745; border-color:#28a745; color:#fff;
-}
-
-/* Barra inferior fija */
-.confirm-bar {
-  position: sticky; bottom: 0; background: #fafafa; border-top: 1px solid #eee;
-  padding: 12px; border-radius: 10px; margin-top: 16px;
-  z-index: 1;
-}
-
-/* Botones de Streamlit en verde */
-.stButton>button {
+/* Botón verde para Confirmar */
+.stButton>button[kind="primary"], .stButton>button#confirm {
   background-color: #28a745 !important;
   color: white !important;
   border: none !important;
@@ -62,6 +39,18 @@ h1, h2, h3 {
   background-color: #218838 !important;
   color: white !important;
 }
+
+/* Cabecera y filas */
+.detail-head { font-weight: 600; opacity: 0.9; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+.detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
+
+/* Botón visual Picking */
+.picking-btn {
+  display:inline-block; border:1px solid #d9d9d9; border-radius:8px;
+  padding:6px 12px; min-width:90px; text-align:center; cursor:pointer;
+  font-weight:500;
+}
+.picking-btn.active { background:#28a745; color:#fff; border-color:#28a745; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -116,7 +105,7 @@ def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
     cur.close()
     conn.close()
 
-# ================== STATE (router) ==================
+# ================== STATE ==================
 if "page" not in st.session_state:
     st.session_state.page = "list"
 if "selected_pedido" not in st.session_state:
@@ -146,7 +135,6 @@ def page_list():
             row = orders_df.iloc[idx]
             numero, cliente = row.NUMERO, row.CLIENTE
 
-            # progreso de picking
             items = get_order_items(numero)
             total_items = len(items)
             picked = (items["PICKING"] == "Y").sum() if total_items > 0 else 0
@@ -204,13 +192,13 @@ def page_detail():
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
+
         c1, c2, c3 = st.columns([5,2,3])
         with c1:
             st.markdown(f'<div class="detail-row">{r["CODIGO"]}</div>', unsafe_allow_html=True)
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
-            # Checkbox estilo botón verde/blanco
             st.markdown('<div class="pick-scope">', unsafe_allow_html=True)
             chk_key = f"chk_{key}"
             st.session_state.setdefault(chk_key, active)
@@ -222,7 +210,7 @@ def page_detail():
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
     ccf, _, _ = st.columns([1,1,2])
     with ccf:
-        if st.button("Confirmar cambios", use_container_width=True, key="confirm"):
+        if st.button("Confirmar cambios", key="confirm", use_container_width=True):
             try:
                 updates = []
                 for _, r in items_df.iterrows():
