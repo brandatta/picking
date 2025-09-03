@@ -143,10 +143,9 @@ def page_list():
             row = orders_df.iloc[idx]
             numero, cliente = row.NUMERO, row.CLIENTE
 
-            # progreso de picking
             items = get_order_items(numero)
             total_items = len(items)
-            picked = (items["PICKING"] == "Y").sum() if total_items > 0 else 0
+            picked = (items["PICKING"].str.upper() == "Y").sum() if total_items > 0 else 0
             pct = int((picked / total_items) * 100) if total_items > 0 else 0
 
             with col:
@@ -187,19 +186,20 @@ def page_detail():
     cliente = items_df["CLIENTE"].iloc[0]
     st.markdown(f"**Cliente:** {cliente}")
 
-    # Inicializar estado por SKU (True => activo/verde)
+    # Inicializar estado
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
+        val = str(r["PICKING"]).strip().upper()
         if key not in st.session_state:
-            st.session_state[key] = (str(r["PICKING"]).upper() == "Y")
+            st.session_state[key] = (val == "Y")
 
-    # Cabecera columnas
+    # Cabecera
     hc1, hc2, hc3 = st.columns([5,2,3])
     with hc1: st.markdown('<div class="detail-head">SKU</div>', unsafe_allow_html=True)
     with hc2: st.markdown('<div class="detail-head" style="text-align:right;">Cantidad</div>', unsafe_allow_html=True)
     with hc3: st.markdown('<div class="detail-head">Picking</div>', unsafe_allow_html=True)
 
-    # Filas
+    # Filas con botones Picking
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
@@ -210,7 +210,6 @@ def page_detail():
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
-            # Botón REAL: blanco (secondary) -> verde (primary) según estado
             clicked = st.button(
                 "Picking",
                 key=f"btn_{key}",
