@@ -18,7 +18,7 @@ h1, h2, h3 {
   white-space: normal !important;
 }
 
-/* Tarjetas en la lista */
+/* Tarjetas */
 .card {
   border: 1px solid #e9e9e9; border-radius: 12px; padding: 12px 14px;
   box-shadow: 0 2px 10px rgba(0,0,0,0.04); background: #fff; height: 100%;
@@ -31,18 +31,16 @@ h1, h2, h3 {
 .detail-head { font-weight: 600; opacity: 0.9; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
 
-/* Checkbox estilizado como botón */
+/* Estilo de checkbox -> botón Picking */
 .pick-scope div[data-testid="stCheckbox"] input { display: none; }
 .pick-scope div[data-testid="stCheckbox"] label {
   display:inline-block; padding:6px 12px; border:1px solid #d9d9d9;
   border-radius:8px; background:#fff; min-width:90px; text-align:center;
-  cursor:pointer; user-select:none; font-weight:500;
+  cursor:pointer; user-select:none; font-weight:500; color:#333;
 }
 .pick-scope div[data-testid="stCheckbox"] input:checked + div[role=checkbox] + label,
 .pick-scope div[data-testid="stCheckbox"] input:checked + label {
-  background:#28a745;  /* verde */
-  border-color:#28a745;
-  color: white;
+  background:#28a745; border-color:#28a745; color:#fff;
 }
 
 /* Barra inferior fija */
@@ -52,11 +50,13 @@ h1, h2, h3 {
   z-index: 1;
 }
 
-/* ==== Botones Streamlit verdes ==== */
+/* Botones de Streamlit en verde */
 .stButton>button {
   background-color: #28a745 !important;
   color: white !important;
   border: none !important;
+  border-radius: 8px !important;
+  padding: 6px 12px !important;
 }
 .stButton>button:hover {
   background-color: #218838 !important;
@@ -130,7 +130,7 @@ def page_list():
     st.title("📦 Pedidos (SAP)")
     c1, _ = st.columns([2,1])
     with c1:
-        buscar = st.text_input("Buscar por cliente o número de pedido")
+        buscar = st.text_input("Buscar por cliente o número de pedido", placeholder="Ej: DIA o 100023120")
     orders_df = get_orders(buscar=buscar)
 
     st.subheader("Resultados")
@@ -210,6 +210,7 @@ def page_detail():
         with c2:
             st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
         with c3:
+            # Checkbox estilo botón verde/blanco
             st.markdown('<div class="pick-scope">', unsafe_allow_html=True)
             chk_key = f"chk_{key}"
             st.session_state.setdefault(chk_key, active)
@@ -221,7 +222,7 @@ def page_detail():
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
     ccf, _, _ = st.columns([1,1,2])
     with ccf:
-        if st.button("Confirmar cambios", type="primary", use_container_width=True, key="confirm"):
+        if st.button("Confirmar cambios", use_container_width=True, key="confirm"):
             try:
                 updates = []
                 for _, r in items_df.iterrows():
