@@ -104,7 +104,7 @@ def get_orders(buscar: str | None = None) -> pd.DataFrame:
     df = pd.read_sql(q, conn, params=params)
     conn.close()
 
-    # Formatear CLIENTE sin .0 si es entero
+    # Formatear CLIENTE: si es numérico y entero, mostrar sin .0
     df["CLIENTE"] = df["CLIENTE"].apply(
         lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
     )
@@ -240,7 +240,6 @@ def page_detail():
     pct_qty = int((picked_qty / total_qty) * 100) if total_qty > 0 else 0
 
     st.progress((picked_qty / total_qty) if total_qty > 0 else 0.0)
-    # Mostrar cantidades sin .0 si son enteras
     picked_str = str(int(picked_qty)) if float(picked_qty).is_integer() else str(picked_qty)
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
@@ -249,21 +248,20 @@ def page_detail():
     cliente = str(items_df["CLIENTE"].iloc[0])
     st.markdown(f"**Cliente:** {cliente}")
 
-    # ========= Encabezado combinado (SKU | Cantidad) + columna de botón =========
-    h1, h2 = st.columns([7,3])
-    with h1:
+    # ========= Encabezado: izquierda (SKU | Cantidad) y derecha (Picking) =========
+    c_left, c_right = st.columns([7,3])
+    with c_left:
         st.markdown('<div class="header-line"><span>SKU</span><span>Cantidad</span></div>', unsafe_allow_html=True)
-    with h2:
-        st.markdown('<div class="detail-head">Picking</div>', unsafe_allow_html=True)
+    with c_right:
+        st.markdown('<div class="header-line">Picking</div>', unsafe_allow_html=True)
 
-    # ========= Filas: (SKU | Cantidad) a la izquierda, botón a la derecha =========
+    # ========= Filas: izquierda (SKU | Cantidad), derecha (botón) =========
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
 
         c_left, c_right = st.columns([7,3])
         with c_left:
-            # SKU y Cantidad en una sola línea responsiva
             sku_txt = str(r["CODIGO"])
             cant = r["CANTIDAD"]
             cant_txt = str(int(cant)) if isinstance(cant, (int, float)) and float(cant).is_integer() else str(cant)
