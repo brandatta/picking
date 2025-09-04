@@ -49,15 +49,34 @@ h1, h2, h3 {
   border-color: #cfcfcf !important;
 }
 
-/* Cabecera y filas */
+/* Cabeceras y filas */
 .detail-head { font-weight: 600; opacity: 0.9; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
+
+/* Línea combinada SKU / Cantidad */
+.line {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%;
+}
+.line .sku { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.line .qty { min-width: 72px; text-align: right; }
+
+/* Encabezado combinado */
+.header-line {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-weight: 600; opacity: .9;
+}
 
 /* Barra inferior fija */
 .confirm-bar {
   position: sticky; bottom: 0; background: #fafafa; border-top: 1px solid #eee;
   padding: 12px; border-radius: 10px; margin-top: 16px;
   z-index: 1;
+}
+
+/* Pequeños ajustes responsive */
+@media (max-width: 420px) {
+  .line .qty { min-width: 64px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -85,7 +104,7 @@ def get_orders(buscar: str | None = None) -> pd.DataFrame:
     df = pd.read_sql(q, conn, params=params)
     conn.close()
 
-    # Formatear CLIENTE: si es numérico y entero, mostrar sin .0
+    # Formatear CLIENTE sin .0 si es entero
     df["CLIENTE"] = df["CLIENTE"].apply(
         lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
     )
@@ -117,9 +136,8 @@ def get_order_items(numero: int) -> pd.DataFrame:
     df["CLIENTE"] = df["CLIENTE"].apply(
         lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
     )
-    # Formatear CANTIDAD sin .0 si es entero (y asegurar numérico para cálculos)
-    df["CANTIDAD"] = pd.to_numeric(df["CANTIDAD"], errors="coerce")
-    df["CANTIDAD"] = df["CANTIDAD"].fillna(0)
+    # Asegurar CANTIDAD numérica y mostrar sin .0 si es entero
+    df["CANTIDAD"] = pd.to_numeric(df["CANTIDAD"], errors="coerce").fillna(0)
     df["CANTIDAD"] = df["CANTIDAD"].apply(lambda x: int(x) if float(x).is_integer() else x)
     return df
 
@@ -212,10 +230,8 @@ def page_detail():
         if key not in st.session_state:
             st.session_state[key] = (r["PICKING"] == "Y")
 
-    # ========= Barra de avance por CANTIDADES (entre título y cliente) =========
-    # Total por cantidades
+    # ========= Barra de avance por CANTIDADES =========
     total_qty = pd.to_numeric(items_df["CANTIDAD"], errors="coerce").fillna(0).sum()
-    # Cantidad "pickeada" segun el estado actual en la UI
     picked_qty = 0
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
@@ -224,38 +240,47 @@ def page_detail():
     pct_qty = int((picked_qty / total_qty) * 100) if total_qty > 0 else 0
 
     st.progress((picked_qty / total_qty) if total_qty > 0 else 0.0)
-    st.caption(f"Avance: {int(picked_qty) if picked_qty.is_integer() else picked_qty} / {int(total_qty) if float(total_qty).is_integer() else total_qty} ({pct_qty}%)")
+    # Mostrar cantidades sin .0 si son enteras
+    picked_str = str(int(picked_qty)) if float(picked_qty).is_integer() else str(picked_qty)
+    total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
+    st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-    # ========= Cliente (debajo de la barra, como pediste) =========
+    # ========= Cliente debajo de la barra =========
     cliente = str(items_df["CLIENTE"].iloc[0])
     st.markdown(f"**Cliente:** {cliente}")
 
-    # Cabecera de la grilla
-    hc1, hc2, hc3 = st.columns([5,2,3])
-    with hc1: st.markdown('<div class="detail-head">SKU</div>', unsafe_allow_html=True)
-    with hc2: st.markdown('<div class="detail-head" style="text-align:right;">Cantidad</div>', unsafe_allow_html=True)
-    with hc3: st.markdown('<div class="detail-head">Picking</div>', unsafe_allow_html=True)
+    # ========= Encabezado combinado (SKU | Cantidad) + columna de botón =========
+    h1, h2 = st.columns([7,3])
+    with h1:
+        st.markdown('<div class="header-line"><span>SKU</span><span>Cantidad</span></div>', unsafe_allow_html=True)
+    with h2:
+        st.markdown('<div class="detail-head">Picking</div>', unsafe_allow_html=True)
 
-    # Filas con botones Picking (toggle inmediato y la barra se actualiza al instante por st.rerun)
+    # ========= Filas: (SKU | Cantidad) a la izquierda, botón a la derecha =========
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
 
-        c1, c2, c3 = st.columns([5,2,3])
-        with c1:
-            st.markdown(f'<div class="detail-row">{r["CODIGO"]}</div>', unsafe_allow_html=True)
-        with c2:
-            # Mostrar cantidad sin .0 si es entero
+        c_left, c_right = st.columns([7,3])
+        with c_left:
+            # SKU y Cantidad en una sola línea responsiva
+            sku_txt = str(r["CODIGO"])
             cant = r["CANTIDAD"]
-            cant_str = str(int(cant)) if isinstance(cant, (int, float)) and float(cant).is_integer() else str(cant)
-            st.markdown(f'<div class="detail-row" style="text-align:right;">{cant_str}</div>', unsafe_allow_html=True)
-        with c3:
+            cant_txt = str(int(cant)) if isinstance(cant, (int, float)) and float(cant).is_integer() else str(cant)
+            st.markdown(f'''
+                <div class="detail-row">
+                  <div class="line">
+                    <span class="sku">{sku_txt}</span>
+                    <span class="qty">{cant_txt}</span>
+                  </div>
+                </div>''', unsafe_allow_html=True)
+        with c_right:
             btn_type = "primary" if active else "secondary"
             if st.button("Picking", key=f"btn_{key}", type=btn_type, use_container_width=True):
                 st.session_state[key] = not active
                 st.rerun()
 
-    # Barra inferior
+    # ========= Barra inferior =========
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
     ccf, _, _ = st.columns([1,1,2])
     with ccf:
