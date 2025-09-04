@@ -28,7 +28,7 @@ h1, h2, h3 {
 .card .stButton>button { width: 100%; border-radius: 8px; padding: 6px 10px; }
 
 /* Botones Streamlit: colores según "type" */
-.stButton>button[kind="primary"] {
+.stButton>button[kind="primary"] {                 /* VERDE (activo) */
   background-color: #28a745 !important;
   color: #fff !important;
   border: 1px solid #28a745 !important;
@@ -37,7 +37,7 @@ h1, h2, h3 {
   background-color: #218838 !important;
   border-color: #218838 !important;
 }
-.stButton>button[kind="secondary"] {
+.stButton>button[kind="secondary"] {               /* BLANCO (inactivo) */
   background-color: #ffffff !important;
   color: #333 !important;
   border: 1px solid #d9d9d9 !important;
@@ -98,6 +98,7 @@ def get_orders(buscar: str | None = None) -> pd.DataFrame:
     df = pd.read_sql(q, conn, params=params)
     conn.close()
 
+    # CLIENTE sin .0 si es entero
     df["CLIENTE"] = df["CLIENTE"].apply(
         lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
     )
@@ -116,6 +117,7 @@ def get_order_items(numero: int) -> pd.DataFrame:
     )
     conn.close()
 
+    # Normalizar PICKING y formatos
     df["PICKING"] = (
         df["PICKING"].fillna("N").astype(str).str.strip().str.upper().replace({"": "N"})
     )
@@ -209,11 +211,13 @@ def page_detail():
         st.info("Este pedido no tiene ítems.")
         return
 
+    # Estado inicial por SKU
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         if key not in st.session_state:
             st.session_state[key] = (r["PICKING"] == "Y")
 
+    # Barra de avance por CANTIDADES
     total_qty = pd.to_numeric(items_df["CANTIDAD"], errors="coerce").fillna(0).sum()
     picked_qty = sum(
         float(r["CANTIDAD"]) for _, r in items_df.iterrows()
@@ -226,20 +230,22 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
+    # Cliente
     cliente = str(items_df["CLIENTE"].iloc[0])
     st.markdown(f"**Cliente:** {cliente}")
 
-# Encabezado solo SKU | Cantidad (alineado con las filas 7/3)
-c_left, c_right = st.columns([7,3])
-with c_left:
-    st.markdown(
-        '<div class="header-line"><span>SKU</span><span class="qty">Cantidad</span></div>',
-        unsafe_allow_html=True
-    )
-with c_right:
-    # Sin título para Picking (espaciador)
-    st.markdown("&nbsp;", unsafe_allow_html=True)
+    # Encabezado ALINEADO con las filas (izquierda 7, derecha 3)
+    c_left, c_right = st.columns([7,3])
+    with c_left:
+        st.markdown(
+            '<div class="header-line"><span>SKU</span><span class="qty">Cantidad</span></div>',
+            unsafe_allow_html=True
+        )
+    with c_right:
+        # Sin título para la columna de botones (espaciador)
+        st.markdown("&nbsp;", unsafe_allow_html=True)
 
+    # Filas (izquierda: SKU|Cantidad; derecha: botón)
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
@@ -262,6 +268,7 @@ with c_right:
                 st.session_state[key] = not active
                 st.rerun()
 
+    # Barra inferior
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
     ccf, _, _ = st.columns([1,1,2])
     with ccf:
