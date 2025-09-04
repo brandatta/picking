@@ -28,7 +28,7 @@ h1, h2, h3 {
 .card .stButton>button { width: 100%; border-radius: 8px; padding: 6px 10px; }
 
 /* Botones Streamlit: colores según "type" */
-.stButton>button[kind="primary"] {                 /* VERDE (activo) */
+.stButton>button[kind="primary"] {
   background-color: #28a745 !important;
   color: #fff !important;
   border: 1px solid #28a745 !important;
@@ -37,7 +37,7 @@ h1, h2, h3 {
   background-color: #218838 !important;
   border-color: #218838 !important;
 }
-.stButton>button[kind="secondary"] {               /* BLANCO (inactivo) */
+.stButton>button[kind="secondary"] {
   background-color: #ffffff !important;
   color: #333 !important;
   border: 1px solid #d9d9d9 !important;
@@ -48,25 +48,22 @@ h1, h2, h3 {
   border-color: #cfcfcf !important;
 }
 
-/* Filas y línea SKU|Cantidad */
+/* Filas */
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
-.line { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+
+/* Línea SKU | Cantidad */
+.line {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%;
+}
 .line .sku { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .line .qty { min-width: 72px; text-align: right; }
 
-/* ===== Encabezado fijo con flex (para evitar que se apile en móvil) ===== */
-.table-head { 
-  display:flex; align-items:center; justify-content:space-between; gap:12px;
-  width:100%; padding:6px 0; border-bottom:1px solid #f0f0f0; font-weight:600; opacity:.9;
-}
-.table-head .left { 
-  flex:1; min-width:0; 
-  display:flex; align-items:center; justify-content:space-between; gap:12px; 
-}
-.table-head .left .qty { min-width:72px; text-align:right; }
-.table-head .right { 
-  flex:0 0 140px;               /* ancho fijo aproximado para alinear con la columna del botón */
-  text-align:center;
+/* Encabezado SKU | Cantidad */
+.header-line {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; padding: 6px 0; border-bottom: 1px solid #f0f0f0;
+  font-weight: 600; opacity: .9;
 }
 
 /* Barra inferior fija */
@@ -74,12 +71,6 @@ h1, h2, h3 {
   position: sticky; bottom: 0; background: #fafafa; border-top: 1px solid #eee;
   padding: 12px; border-radius: 10px; margin-top: 16px;
   z-index: 1;
-}
-
-/* Responsive fino */
-@media (max-width: 420px) {
-  .line .qty { min-width: 64px; }
-  .table-head .right { flex-basis: 120px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -107,7 +98,6 @@ def get_orders(buscar: str | None = None) -> pd.DataFrame:
     df = pd.read_sql(q, conn, params=params)
     conn.close()
 
-    # Formatear CLIENTE sin .0 si es entero
     df["CLIENTE"] = df["CLIENTE"].apply(
         lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
     )
@@ -126,20 +116,12 @@ def get_order_items(numero: int) -> pd.DataFrame:
     )
     conn.close()
 
-    # Normalizar PICKING
     df["PICKING"] = (
-        df["PICKING"]
-        .fillna("N")
-        .astype(str)
-        .str.strip()
-        .str.upper()
-        .replace({"": "N"})
+        df["PICKING"].fillna("N").astype(str).str.strip().str.upper().replace({"": "N"})
     )
-    # Formatear CLIENTE sin .0 si es entero
     df["CLIENTE"] = df["CLIENTE"].apply(
         lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
     )
-    # Asegurar CANTIDAD numérica y mostrar sin .0 si es entero
     df["CANTIDAD"] = pd.to_numeric(df["CANTIDAD"], errors="coerce").fillna(0)
     df["CANTIDAD"] = df["CANTIDAD"].apply(lambda x: int(x) if float(x).is_integer() else x)
     return df
@@ -227,19 +209,16 @@ def page_detail():
         st.info("Este pedido no tiene ítems.")
         return
 
-    # ========= Estado inicial por SKU (True si Y) =========
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         if key not in st.session_state:
             st.session_state[key] = (r["PICKING"] == "Y")
 
-    # ========= Barra de avance por CANTIDADES =========
     total_qty = pd.to_numeric(items_df["CANTIDAD"], errors="coerce").fillna(0).sum()
-    picked_qty = 0
-    for _, r in items_df.iterrows():
-        key = f"pick_{numero}_{r['CODIGO']}"
-        if st.session_state.get(key, False):
-            picked_qty += float(r["CANTIDAD"]) if r["CANTIDAD"] is not None else 0
+    picked_qty = sum(
+        float(r["CANTIDAD"]) for _, r in items_df.iterrows()
+        if st.session_state.get(f"pick_{numero}_{r['CODIGO']}", False)
+    )
     pct_qty = int((picked_qty / total_qty) * 100) if total_qty > 0 else 0
 
     st.progress((picked_qty / total_qty) if total_qty > 0 else 0.0)
@@ -247,22 +226,12 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-    # ========= Cliente debajo de la barra =========
     cliente = str(items_df["CLIENTE"].iloc[0])
     st.markdown(f"**Cliente:** {cliente}")
 
-    # ========= Encabezado FIJO (SKU | Cantidad | Picking) con flex =========
-    st.markdown('''
-      <div class="table-head">
-        <div class="left">
-          <span>SKU</span>
-          <span class="qty">Cantidad</span>
-        </div>
-        <div class="right">Picking</div>
-      </div>
-    ''', unsafe_allow_html=True)
+    # Encabezado solo SKU | Cantidad (se elimina el de Picking)
+    st.markdown('<div class="header-line"><span>SKU</span><span class="qty">Cantidad</span></div>', unsafe_allow_html=True)
 
-    # ========= Filas: izquierda (SKU|Cantidad) + derecha (botón) =========
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
@@ -285,7 +254,6 @@ def page_detail():
                 st.session_state[key] = not active
                 st.rerun()
 
-    # ========= Barra inferior =========
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
     ccf, _, _ = st.columns([1,1,2])
     with ccf:
