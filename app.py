@@ -85,7 +85,7 @@ def get_orders(buscar: str | None = None) -> pd.DataFrame:
     df = pd.read_sql(q, conn, params=params)
     conn.close()
 
-    # Formatear cliente: si es numérico y entero, mostrar sin .0
+    # Formatear CLIENTE: si es numérico y entero, mostrar sin .0
     df["CLIENTE"] = df["CLIENTE"].apply(
         lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
     )
@@ -113,14 +113,14 @@ def get_order_items(numero: int) -> pd.DataFrame:
         .str.upper()
         .replace({"": "N"})
     )
-    # Formatear cliente
+    # Formatear CLIENTE sin .0 si es entero
     df["CLIENTE"] = df["CLIENTE"].apply(
         lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
     )
-    # Formatear cantidad
-    df["CANTIDAD"] = df["CANTIDAD"].apply(
-        lambda x: int(x) if isinstance(x, (int, float)) and float(x).is_integer() else x
-    )
+    # Formatear CANTIDAD sin .0 si es entero (y asegurar numérico para cálculos)
+    df["CANTIDAD"] = pd.to_numeric(df["CANTIDAD"], errors="coerce")
+    df["CANTIDAD"] = df["CANTIDAD"].fillna(0)
+    df["CANTIDAD"] = df["CANTIDAD"].apply(lambda x: int(x) if float(x).is_integer() else x)
     return df
 
 def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
@@ -206,22 +206,37 @@ def page_detail():
         st.info("Este pedido no tiene ítems.")
         return
 
-    cliente = items_df["CLIENTE"].iloc[0]
-    st.markdown(f"**Cliente:** {cliente}")
-
-    # Inicializar estado
+    # ========= Estado inicial por SKU (True si Y) =========
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         if key not in st.session_state:
             st.session_state[key] = (r["PICKING"] == "Y")
 
-    # Cabecera
+    # ========= Barra de avance por CANTIDADES (entre título y cliente) =========
+    # Total por cantidades
+    total_qty = pd.to_numeric(items_df["CANTIDAD"], errors="coerce").fillna(0).sum()
+    # Cantidad "pickeada" segun el estado actual en la UI
+    picked_qty = 0
+    for _, r in items_df.iterrows():
+        key = f"pick_{numero}_{r['CODIGO']}"
+        if st.session_state.get(key, False):
+            picked_qty += float(r["CANTIDAD"]) if r["CANTIDAD"] is not None else 0
+    pct_qty = int((picked_qty / total_qty) * 100) if total_qty > 0 else 0
+
+    st.progress((picked_qty / total_qty) if total_qty > 0 else 0.0)
+    st.caption(f"Avance por cantidades: {int(picked_qty) if picked_qty.is_integer() else picked_qty} / {int(total_qty) if float(total_qty).is_integer() else total_qty} ({pct_qty}%)")
+
+    # ========= Cliente (debajo de la barra, como pediste) =========
+    cliente = str(items_df["CLIENTE"].iloc[0])
+    st.markdown(f"**Cliente:** {cliente}")
+
+    # Cabecera de la grilla
     hc1, hc2, hc3 = st.columns([5,2,3])
     with hc1: st.markdown('<div class="detail-head">SKU</div>', unsafe_allow_html=True)
     with hc2: st.markdown('<div class="detail-head" style="text-align:right;">Cantidad</div>', unsafe_allow_html=True)
     with hc3: st.markdown('<div class="detail-head">Picking</div>', unsafe_allow_html=True)
 
-    # Filas con botones Picking
+    # Filas con botones Picking (toggle inmediato y la barra se actualiza al instante por st.rerun)
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
@@ -230,7 +245,10 @@ def page_detail():
         with c1:
             st.markdown(f'<div class="detail-row">{r["CODIGO"]}</div>', unsafe_allow_html=True)
         with c2:
-            st.markdown(f'<div class="detail-row" style="text-align:right;">{r["CANTIDAD"]}</div>', unsafe_allow_html=True)
+            # Mostrar cantidad sin .0 si es entero
+            cant = r["CANTIDAD"]
+            cant_str = str(int(cant)) if isinstance(cant, (int, float)) and float(cant).is_integer() else str(cant)
+            st.markdown(f'<div class="detail-row" style="text-align:right;">{cant_str}</div>', unsafe_allow_html=True)
         with c3:
             btn_type = "primary" if active else "secondary"
             if st.button("Picking", key=f"btn_{key}", type=btn_type, use_container_width=True):
@@ -245,7 +263,7 @@ def page_detail():
             try:
                 updates = []
                 for _, r in items_df.iterrows():
-                    logical_key = f"pick_{numero}_{r["CODIGO"]}"
+                    logical_key = f"pick_{numero}_{r['CODIGO']}"
                     flag = "Y" if st.session_state[logical_key] else "N"
                     updates.append((str(r["CODIGO"]), flag))
                 update_picking_bulk(numero, updates)
