@@ -229,8 +229,16 @@ def page_detail():
     cliente = str(items_df["CLIENTE"].iloc[0])
     st.markdown(f"**Cliente:** {cliente}")
 
-    # Encabezado solo SKU | Cantidad (se elimina el de Picking)
-    st.markdown('<div class="header-line"><span>SKU</span><span class="qty">Cantidad</span></div>', unsafe_allow_html=True)
+# Encabezado solo SKU | Cantidad (alineado con las filas 7/3)
+c_left, c_right = st.columns([7,3])
+with c_left:
+    st.markdown(
+        '<div class="header-line"><span>SKU</span><span class="qty">Cantidad</span></div>',
+        unsafe_allow_html=True
+    )
+with c_right:
+    # Sin título para Picking (espaciador)
+    st.markdown("&nbsp;", unsafe_allow_html=True)
 
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
