@@ -224,7 +224,7 @@ def page_detail():
     pct_qty = int((picked_qty / total_qty) * 100) if total_qty > 0 else 0
 
     st.progress((picked_qty / total_qty) if total_qty > 0 else 0.0)
-    st.caption(f"Avance por cantidades: {int(picked_qty) if picked_qty.is_integer() else picked_qty} / {int(total_qty) if float(total_qty).is_integer() else total_qty} ({pct_qty}%)")
+    st.caption(f"Avance: {int(picked_qty) if picked_qty.is_integer() else picked_qty} / {int(total_qty) if float(total_qty).is_integer() else total_qty} ({pct_qty}%)")
 
     # ========= Cliente (debajo de la barra, como pediste) =========
     cliente = str(items_df["CLIENTE"].iloc[0])
