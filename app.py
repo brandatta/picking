@@ -37,7 +37,6 @@ h1, h2, h3 {
   background-color: #218838 !important;
   border-color: #218838 !important;
 }
-
 .stButton>button[kind="secondary"] {               /* BLANCO (inactivo) */
   background-color: #ffffff !important;
   color: #333 !important;
@@ -49,22 +48,25 @@ h1, h2, h3 {
   border-color: #cfcfcf !important;
 }
 
-/* Cabeceras y filas */
-.detail-head { font-weight: 600; opacity: 0.9; padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+/* Filas y línea SKU|Cantidad */
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
-
-/* Línea combinada SKU / Cantidad */
-.line {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  width: 100%;
-}
+.line { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
 .line .sku { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .line .qty { min-width: 72px; text-align: right; }
 
-/* Encabezado combinado */
-.header-line {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  width: 100%; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-weight: 600; opacity: .9;
+/* ===== Encabezado fijo con flex (para evitar que se apile en móvil) ===== */
+.table-head { 
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  width:100%; padding:6px 0; border-bottom:1px solid #f0f0f0; font-weight:600; opacity:.9;
+}
+.table-head .left { 
+  flex:1; min-width:0; 
+  display:flex; align-items:center; justify-content:space-between; gap:12px; 
+}
+.table-head .left .qty { min-width:72px; text-align:right; }
+.table-head .right { 
+  flex:0 0 140px;               /* ancho fijo aproximado para alinear con la columna del botón */
+  text-align:center;
 }
 
 /* Barra inferior fija */
@@ -74,9 +76,10 @@ h1, h2, h3 {
   z-index: 1;
 }
 
-/* Pequeños ajustes responsive */
+/* Responsive fino */
 @media (max-width: 420px) {
   .line .qty { min-width: 64px; }
+  .table-head .right { flex-basis: 120px; }
 }
 </style>
 """, unsafe_allow_html=True)
@@ -104,7 +107,7 @@ def get_orders(buscar: str | None = None) -> pd.DataFrame:
     df = pd.read_sql(q, conn, params=params)
     conn.close()
 
-    # Formatear CLIENTE: si es numérico y entero, mostrar sin .0
+    # Formatear CLIENTE sin .0 si es entero
     df["CLIENTE"] = df["CLIENTE"].apply(
         lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
     )
@@ -248,14 +251,18 @@ def page_detail():
     cliente = str(items_df["CLIENTE"].iloc[0])
     st.markdown(f"**Cliente:** {cliente}")
 
-    # ========= Encabezado: izquierda (SKU | Cantidad) y derecha (Picking) =========
-    c_left, c_right = st.columns([7,3])
-    with c_left:
-        st.markdown('<div class="header-line"><span>SKU</span><span>Cantidad</span></div>', unsafe_allow_html=True)
-    with c_right:
-        st.markdown('<div class="header-line">Picking</div>', unsafe_allow_html=True)
+    # ========= Encabezado FIJO (SKU | Cantidad | Picking) con flex =========
+    st.markdown('''
+      <div class="table-head">
+        <div class="left">
+          <span>SKU</span>
+          <span class="qty">Cantidad</span>
+        </div>
+        <div class="right">Picking</div>
+      </div>
+    ''', unsafe_allow_html=True)
 
-    # ========= Filas: izquierda (SKU | Cantidad), derecha (botón) =========
+    # ========= Filas: izquierda (SKU|Cantidad) + derecha (botón) =========
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
