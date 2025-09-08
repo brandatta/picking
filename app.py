@@ -3,6 +3,7 @@ import pandas as pd
 import mysql.connector
 import bcrypt
 import random  # <- para asignación aleatoria
+import time    # <- para backoff en reintentos
 
 # ================== CONFIG ==================
 st.set_page_config(page_title="Picking - Pedidos (SAP)", layout="wide")
@@ -190,20 +191,35 @@ def render_setup_panel():
                     st.error(f"No se pudo crear el admin: {e}")
 
 # ================== ADMIN PANEL ==================
-def bulk_assign_usr_pick(pickers: list[str], mode: str = "all") -> tuple[int, int]:
+def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
+                         chunk_size: int = 200, max_retries: int = 3) -> tuple[int, int]:
     """
     Asigna aleatoriamente un usuario de 'pickers' a cada NUMERO de pedido.
     mode: "all" -> reasigna todos los pedidos
-          "missing" -> solo pedidos con usr_pick vacío/NULL
-    Devuelve: (cantidad_pedidos_afectados, filas_actualizadas_aprox)
+          "missing" -> solo pedidos con usr_pick NULL o TRIM(usr_pick)=''
+    Actualiza por pedido (uno a uno), con autocommit y reintentos ante 1205/1213.
+    Devuelve: (pedidos_afectados, filas_actualizadas_acumuladas)
     """
     if not pickers:
         raise ValueError("La lista de pickers está vacía.")
 
-    conn = get_conn(); cur = conn.cursor()
+    conn = get_conn()
+    conn.autocommit = True
+    cur = conn.cursor()
 
+    # Reducir lock waits (si el server lo permite)
+    try:
+        cur.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+    except Exception:
+        pass
+    try:
+        cur.execute("SET SESSION innodb_lock_wait_timeout = 5")
+    except Exception:
+        pass
+
+    # Pedidos a tocar
     if mode == "missing":
-        cur.execute("SELECT DISTINCT NUMERO FROM sap WHERE COALESCE(usr_pick,'') = ''")
+        cur.execute("SELECT DISTINCT NUMERO FROM sap WHERE usr_pick IS NULL OR TRIM(usr_pick) = ''")
     else:
         cur.execute("SELECT DISTINCT NUMERO FROM sap")
 
@@ -212,15 +228,48 @@ def bulk_assign_usr_pick(pickers: list[str], mode: str = "all") -> tuple[int, in
         cur.close(); conn.close()
         return (0, 0)
 
-    rng = random.SystemRandom()
-    assignments = [(rng.choice(pickers), num) for num in numeros]  # (usr_pick, NUMERO)
+    random.shuffle(numeros)  # Evita que varias sesiones choquen en mismo orden
 
-    cur.executemany("UPDATE sap SET usr_pick = %s WHERE NUMERO = %s", assignments)
-    conn.commit()
-    filas = cur.rowcount if cur.rowcount is not None else 0
+    pedidos_afectados = 0
+    filas_actualizadas = 0
+
+    for i in range(0, len(numeros), chunk_size):
+        chunk = numeros[i:i+chunk_size]
+        for num in chunk:
+            usr = random.choice(pickers)
+
+            for attempt in range(max_retries):
+                try:
+                    if mode == "missing":
+                        cur.execute("""
+                            UPDATE sap
+                               SET usr_pick = %s
+                             WHERE NUMERO = %s
+                               AND (usr_pick IS NULL OR TRIM(usr_pick) = '')
+                        """, (usr, num))
+                    else:
+                        cur.execute("""
+                            UPDATE sap
+                               SET usr_pick = %s
+                             WHERE NUMERO = %s
+                        """, (usr, num))
+
+                    if cur.rowcount and cur.rowcount > 0:
+                        filas_actualizadas += cur.rowcount
+                        pedidos_afectados += 1
+                    break  # éxito
+
+                except mysql.connector.errors.DatabaseError as e:
+                    if getattr(e, "errno", None) in (1205, 1213):
+                        # backoff con jitter
+                        time.sleep(0.4 * (attempt + 1) + random.random() * 0.3)
+                        continue
+                    else:
+                        cur.close(); conn.close()
+                        raise
 
     cur.close(); conn.close()
-    return (len(numeros), filas)
+    return (pedidos_afectados, filas_actualizadas)
 
 def render_user_admin_panel():
     """Panel UI de administración de usuarios (solo admin)."""
