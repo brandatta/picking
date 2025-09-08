@@ -93,23 +93,105 @@ def get_conn():
         port=st.secrets["app_marco_new"].get("port", 3306),
     )
 
+# ================== HELPERS USUARIOS (DB) ==================
+def ensure_usuarios_table():
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(50) NOT NULL UNIQUE,
+            password_hash VARCHAR(255) NOT NULL,
+            nombre VARCHAR(100),
+            rol VARCHAR(50),
+            creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit(); cur.close(); conn.close()
+
+def count_usuarios():
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) FROM usuarios")
+    n = cur.fetchone()[0]
+    cur.close(); conn.close()
+    return n
+
+def create_user(username: str, plain_password: str, nombre: str, rol: str):
+    conn = get_conn(); cur = conn.cursor()
+    hashed = bcrypt.hashpw(plain_password.encode("utf-8"), bcrypt.gensalt()).decode()
+    cur.execute(
+        "INSERT INTO usuarios (username, password_hash, nombre, rol) VALUES (%s, %s, %s, %s)",
+        (username, hashed, nombre, rol)
+    )
+    conn.commit(); cur.close(); conn.close()
+
 # ================== AUTH ==================
 def validar_usuario(username: str, password: str):
     """
     Devuelve el dict del usuario si las credenciales son válidas, sino None.
-    Tabla esperada: usuarios(username UNIQUE, password_hash, nombre, rol, ...)
+    Valida hash bcrypt y evita crashear si el hash guardado es inválido.
     """
     if not username or not password:
         return None
-    conn = get_conn()
-    cur = conn.cursor(dictionary=True)
+    conn = get_conn(); cur = conn.cursor(dictionary=True)
     cur.execute("SELECT id, username, password_hash, nombre, rol FROM usuarios WHERE username = %s", (username,))
     user = cur.fetchone()
-    cur.close()
-    conn.close()
-    if user and bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
-        return user
-    return None
+    cur.close(); conn.close()
+
+    if not user:
+        return None
+
+    stored = user.get("password_hash")
+    if not stored or not isinstance(stored, str) or not stored.startswith("$2"):
+        # hash mal formado o no bcrypt
+        return None
+
+    try:
+        ok = bcrypt.checkpw(password.encode("utf-8"), stored.encode("utf-8"))
+    except ValueError:
+        # e.g., "Invalid salt"
+        return None
+
+    return user if ok else None
+
+def render_setup_panel():
+    """
+    Panel de setup rápido: crear tabla y crear admin por defecto (admin/Admin123!).
+    Si existe SETUP_TOKEN en secrets, lo pide; si no, no.
+    Aparece solo si no hay usuario logueado (pantalla de login).
+    """
+    with st.expander("🛠️ Setup rápido (solo una vez)"):
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Crear tabla 'usuarios'"):
+                try:
+                    ensure_usuarios_table()
+                    st.success("Tabla 'usuarios' creada/verificada.")
+                except Exception as e:
+                    st.error(f"No se pudo crear/verificar la tabla: {e}")
+
+        with col2:
+            need_token = st.secrets.get("SETUP_TOKEN") is not None
+            tok = st.text_input("Token (si corresponde)", type="password") if need_token else None
+
+            if st.button("Crear admin por defecto (admin / Admin123!)", type="secondary"):
+                try:
+                    ensure_usuarios_table()
+                    if need_token and tok != st.secrets.get("SETUP_TOKEN"):
+                        st.error("Token inválido.")
+                    else:
+                        # Evitar duplicar admin
+                        conn = get_conn(); cur = conn.cursor()
+                        cur.execute("SELECT COUNT(*) FROM usuarios WHERE username=%s", ("admin",))
+                        exists = cur.fetchone()[0] > 0
+                        cur.close(); conn.close()
+
+                        if exists:
+                            st.info("El usuario 'admin' ya existe.")
+                        else:
+                            create_user("admin", "Admin123!", "Administrador", "admin")
+                            st.success("Usuario 'admin' creado. Probá iniciar sesión.")
+                except Exception as e:
+                    st.error(f"No se pudo crear el admin: {e}")
 
 def require_login():
     if "user" not in st.session_state:
@@ -123,16 +205,29 @@ def require_login():
         # Pantalla de login
         st.markdown('<div class="login-card">', unsafe_allow_html=True)
         st.header("Iniciar sesión")
-        username = st.text_input("Usuario")
-        password = st.text_input("Contraseña", type="password")
+
+        username = st.text_input("Usuario").strip()
+        password = st.text_input("Contraseña", type="password").strip()
+
         col_l, col_r = st.columns([1,1])
         with col_l:
             login_clicked = st.button("Ingresar", type="primary", use_container_width=True)
         with col_r:
             st.write("")  # espacio
+
         st.markdown('</div>', unsafe_allow_html=True)
 
+        # Panel de setup (crear tabla/crear admin)
+        render_setup_panel()
+
         if login_clicked:
+            # Aseguramos que la tabla exista para evitar error si está vacía/recién creada
+            try:
+                ensure_usuarios_table()
+            except Exception as e:
+                st.error(f"Error preparando tabla de usuarios: {e}")
+                return False
+
             user = validar_usuario(username, password)
             if user:
                 st.session_state.user = user
