@@ -30,6 +30,9 @@ h1, h2, h3 {
 .card small { color: #666; }
 .card .stButton>button { width: 100%; border-radius: 8px; padding: 6px 10px; }
 
+/* Tarjeta resaltada cuando el usuario está en foco */
+.focus-card { border: 2px solid #28a745 !important; }
+
 /* Botones Streamlit: colores según "type" */
 .stButton>button[kind="primary"] {
   background-color: #28a745 !important; color: #fff !important; border: 1px solid #28a745 !important;
@@ -62,6 +65,16 @@ h1, h2, h3 {
 .login-card { max-width: 420px; margin: 8vh auto; padding: 24px;
   border: 1px solid #eee; border-radius: 12px; background: #fff;
   box-shadow: 0 2px 14px rgba(0,0,0,0.04); }
+
+/* Barra de foco del usuario */
+.focus-info {
+  background: #fffbe6; border: 1px solid #ffe58f; border-radius: 10px;
+  padding: 8px 10px; display: flex; align-items: center; gap: 10px; margin-top: 6px;
+}
+.focus-pill {
+  background: #fff1b8; border: 1px solid #ffe58f; border-radius: 999px;
+  padding: 2px 10px; font-weight: 600;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -207,7 +220,6 @@ def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
     conn.autocommit = True
     cur = conn.cursor()
 
-    # Reducir lock waits (si el server lo permite)
     try:
         cur.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
     except Exception:
@@ -217,7 +229,6 @@ def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
     except Exception:
         pass
 
-    # Pedidos a tocar
     if mode == "missing":
         cur.execute("SELECT DISTINCT NUMERO FROM sap WHERE usr_pick IS NULL OR TRIM(usr_pick) = ''")
     else:
@@ -228,7 +239,7 @@ def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
         cur.close(); conn.close()
         return (0, 0)
 
-    random.shuffle(numeros)  # Evita que varias sesiones choquen en mismo orden
+    random.shuffle(numeros)
 
     pedidos_afectados = 0
     filas_actualizadas = 0
@@ -237,7 +248,6 @@ def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
         chunk = numeros[i:i+chunk_size]
         for num in chunk:
             usr = random.choice(pickers)
-
             for attempt in range(max_retries):
                 try:
                     if mode == "missing":
@@ -253,15 +263,12 @@ def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
                                SET usr_pick = %s
                              WHERE NUMERO = %s
                         """, (usr, num))
-
                     if cur.rowcount and cur.rowcount > 0:
                         filas_actualizadas += cur.rowcount
                         pedidos_afectados += 1
-                    break  # éxito
-
+                    break
                 except mysql.connector.errors.DatabaseError as e:
                     if getattr(e, "errno", None) in (1205, 1213):
-                        # backoff con jitter
                         time.sleep(0.4 * (attempt + 1) + random.random() * 0.3)
                         continue
                     else:
@@ -271,6 +278,7 @@ def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
     cur.close(); conn.close()
     return (pedidos_afectados, filas_actualizadas)
 
+# ================== ADMIN USERS PANEL ==================
 def render_user_admin_panel():
     """Panel UI de administración de usuarios (solo admin)."""
     u = st.session_state.get("user")
@@ -377,7 +385,7 @@ def require_login():
         st.session_state.selected_pedido = None
 
     if st.session_state.user is None:
-        # ===== Ocultar header/toolbar y reducir padding SOLO en login =====
+        # Ocultar header/toolbar y reducir padding SOLO en login
         st.markdown("""
         <style>
         header[data-testid="stHeader"] { display: none; }
@@ -413,7 +421,6 @@ def require_login():
                 st.error(f"Error preparando tabla de usuarios: {e}")
                 return False
 
-        # Validar
             user = validar_usuario(username, password)
             if user:
                 st.session_state.user = user
@@ -430,7 +437,7 @@ def get_orders(buscar: str | None = None,
                current_username: str | None = None,
                current_role: str | None = None) -> pd.DataFrame:
     """
-    - Admin/operador/jefe: ven todos los pedidos.
+    - Admin/operador/jefe: ven todos los pedidos (incluye usr_pick para destacar foco).
     - Picker: solo ve pedidos donde sap.usr_pick = current_username.
     """
     params = []
@@ -442,7 +449,7 @@ def get_orders(buscar: str | None = None,
             params.extend([f"%{buscar}%", f"%{buscar}%"])
         q = base + " ORDER BY NUMERO DESC LIMIT 150"
     else:
-        base = "SELECT DISTINCT NUMERO, CLIENTE FROM sap"
+        base = "SELECT DISTINCT NUMERO, CLIENTE, usr_pick FROM sap"
         where = []
         if buscar:
             where.append("(CAST(NUMERO AS CHAR) LIKE %s OR CLIENTE LIKE %s)")
@@ -526,7 +533,6 @@ def get_user_progress() -> pd.DataFrame:
     df = pd.read_sql(q, conn)
     conn.close()
 
-    # Normalizar números y % por cantidades
     df["qty_total"]  = pd.to_numeric(df["qty_total"], errors="coerce").fillna(0)
     df["qty_picked"] = pd.to_numeric(df["qty_picked"], errors="coerce").fillna(0)
     df["pct_qty"] = df.apply(lambda r: int((r["qty_picked"] / r["qty_total"]) * 100) if r["qty_total"] > 0 else 0, axis=1)
@@ -535,6 +541,14 @@ def get_user_progress() -> pd.DataFrame:
 # ================== STATE HELPERS ==================
 def go(page: str):
     st.session_state.page = page
+
+def set_user_focus(username: str):
+    st.session_state["user_focus"] = username
+    st.session_state["team_selected_user"] = username  # mantiene compatibilidad con la vista de equipo
+
+def clear_user_focus():
+    st.session_state.pop("user_focus", None)
+    st.session_state.pop("team_selected_user", None)
 
 # ================== LAYOUT: TOP BAR (usuario) ==================
 def render_topbar():
@@ -550,11 +564,19 @@ def render_topbar():
             n1, n2 = st.columns(2)
             n1.button("📦 Pedidos", on_click=go, args=("list",), use_container_width=True)
             n2.button("👥 Equipo",   on_click=go, args=("team",), use_container_width=True)
+            # Muestra foco si existe
+            focus_user = st.session_state.get("user_focus")
+            if focus_user:
+                colf1, colf2 = st.columns([5,1])
+                with colf1:
+                    st.markdown(f'<div class="focus-info">👤 En foco: <span class="focus-pill">{focus_user}</span></div>', unsafe_allow_html=True)
+                with colf2:
+                    st.button("Quitar foco", on_click=clear_user_focus, use_container_width=True)
     with c2:
         if st.button("Cerrar sesión", use_container_width=True):
             st.session_state.user = None
             for k in list(st.session_state.keys()):
-                if k.startswith("pick_") or k.startswith("btn_pick_") or k == "team_selected_user":
+                if k.startswith("pick_") or k.startswith("btn_pick_") or k in ("team_selected_user","user_focus"):
                     del st.session_state[k]
             st.rerun()
 
@@ -562,8 +584,13 @@ def render_topbar():
 def page_list():
     role = get_user_role()
     uname = get_username()
+    focus_user = st.session_state.get("user_focus")
 
     st.subheader("Listado de pedidos")
+    # Si hay foco y el rol es admin/jefe, lo recordamos visualmente
+    if focus_user and role in ("admin","jefe"):
+        st.markdown(f'<div class="focus-info">👤 Viendo pedidos con foco en: <span class="focus-pill">{focus_user}</span></div>', unsafe_allow_html=True)
+
     c1, _ = st.columns([2,1])
     with c1:
         buscar = st.text_input("Buscar por cliente o número de pedido", placeholder="Ej: DIA o 100023120")
@@ -585,16 +612,25 @@ def page_list():
             if idx >= total: break
             row = orders_df.iloc[idx]
             numero, cliente = row.NUMERO, row.CLIENTE
+            asignado_a = None
+            if "usr_pick" in orders_df.columns:
+                asignado_a = str(row["usr_pick"]) if pd.notna(row["usr_pick"]) and str(row["usr_pick"]).strip() != "" else None
 
             items = get_order_items(numero)
             total_items = len(items)
             picked = (items["PICKING"] == "Y").sum() if total_items > 0 else 0
             pct = int((picked / total_items) * 100) if total_items > 0 else 0
 
+            # Si hay foco y coincide, resaltamos la tarjeta
+            is_focus_card = bool(focus_user and asignado_a and focus_user.lower() == str(asignado_a).lower())
+            card_class = "card focus-card" if is_focus_card else "card"
+
             with col:
-                st.markdown('<div class="card">', unsafe_allow_html=True)
+                st.markdown(f'<div class="{card_class}">', unsafe_allow_html=True)
                 st.markdown(f"<h4>Pedido #{numero}</h4>", unsafe_allow_html=True)
                 st.markdown(f"<div><small>Cliente:</small> <b>{cliente}</b></div>", unsafe_allow_html=True)
+                if asignado_a and role in ("admin","jefe"):
+                    st.caption(f"Asignado a: {asignado_a}")
                 st.progress(pct/100)
                 st.caption(f"Picking: {picked}/{total_items} ({pct}%)")
                 if st.button("Ver detalle", key=f"open_{numero}"):
@@ -638,14 +674,14 @@ def render_team_dashboard():
                 st.progress((qty_picked/qty_total) if qty_total > 0 else 0.0)
                 st.caption(f"Avance por cantidades: {int(qty_picked)}/{int(qty_total)} ({pct}%)")
                 if st.button("Ver pedidos", key=f"ver_{usuario}"):
-                    st.session_state.team_selected_user = usuario
+                    set_user_focus(usuario)  # fija foco global y selecciona en la vista
                 st.markdown("</div>", unsafe_allow_html=True)
             idx += 1
 
     # Pedidos del usuario seleccionado
     sel = st.session_state.get("team_selected_user")
     if sel:
-        st.markdown(f"### Pedidos de **{sel}**")
+        st.markdown(f'<div class="focus-info">👤 Usuario en foco: <span class="focus-pill">{sel}</span></div>', unsafe_allow_html=True)
         odf = get_orders(buscar=None, current_username=sel, current_role="picker")
         if odf.empty:
             st.info("No hay pedidos para este usuario.")
@@ -663,7 +699,7 @@ def render_team_dashboard():
                     pct_card = int((picked/total_items)*100) if total_items > 0 else 0
 
                     with c:
-                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        st.markdown('<div class="card focus-card">', unsafe_allow_html=True)
                         st.markdown(f"<h4>Pedido #{numero}</h4>", unsafe_allow_html=True)
                         st.markdown(f"<div><small>Cliente:</small> <b>{cliente}</b></div>", unsafe_allow_html=True)
                         st.progress(pct_card/100 if total_items>0 else 0.0)
@@ -674,9 +710,11 @@ def render_team_dashboard():
                         st.markdown("</div>", unsafe_allow_html=True)
                     i2 += 1
 
-        if st.button("Volver al resumen de usuarios"):
-            st.session_state.pop("team_selected_user", None)
-            st.rerun()
+        c1, c2 = st.columns([1,1])
+        with c1:
+            st.button("Volver al resumen de usuarios", on_click=lambda: st.session_state.pop("team_selected_user", None), use_container_width=True)
+        with c2:
+            st.button("Quitar foco", on_click=clear_user_focus, use_container_width=True)
 
 # ================== PÁGINA: DETALLE ==================
 def page_detail():
