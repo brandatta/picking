@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import mysql.connector
 import bcrypt
+import random  # <- para asignación aleatoria
 
 # ================== CONFIG ==================
 st.set_page_config(page_title="Picking - Pedidos (SAP)", layout="wide")
@@ -188,6 +189,39 @@ def render_setup_panel():
                 except Exception as e:
                     st.error(f"No se pudo crear el admin: {e}")
 
+# ================== ADMIN PANEL ==================
+def bulk_assign_usr_pick(pickers: list[str], mode: str = "all") -> tuple[int, int]:
+    """
+    Asigna aleatoriamente un usuario de 'pickers' a cada NUMERO de pedido.
+    mode: "all" -> reasigna todos los pedidos
+          "missing" -> solo pedidos con usr_pick vacío/NULL
+    Devuelve: (cantidad_pedidos_afectados, filas_actualizadas_aprox)
+    """
+    if not pickers:
+        raise ValueError("La lista de pickers está vacía.")
+
+    conn = get_conn(); cur = conn.cursor()
+
+    if mode == "missing":
+        cur.execute("SELECT DISTINCT NUMERO FROM sap WHERE COALESCE(usr_pick,'') = ''")
+    else:
+        cur.execute("SELECT DISTINCT NUMERO FROM sap")
+
+    numeros = [r[0] for r in cur.fetchall()]
+    if not numeros:
+        cur.close(); conn.close()
+        return (0, 0)
+
+    rng = random.SystemRandom()
+    assignments = [(rng.choice(pickers), num) for num in numeros]  # (usr_pick, NUMERO)
+
+    cur.executemany("UPDATE sap SET usr_pick = %s WHERE NUMERO = %s", assignments)
+    conn.commit()
+    filas = cur.rowcount if cur.rowcount is not None else 0
+
+    cur.close(); conn.close()
+    return (len(numeros), filas)
+
 def render_user_admin_panel():
     """Panel UI de administración de usuarios (solo admin)."""
     u = st.session_state.get("user")
@@ -195,7 +229,7 @@ def render_user_admin_panel():
         return
 
     with st.expander("⚙️ Administración – Usuarios"):
-        tabs = st.tabs(["➕ Crear usuario", "🔁 Resetear contraseña"])
+        tabs = st.tabs(["➕ Crear usuario", "🔁 Resetear contraseña", "🔀 Asignar pedidos a pickers"])
 
         # --- Crear usuario ---
         with tabs[0]:
@@ -256,6 +290,35 @@ def render_user_admin_panel():
                         except Exception as e:
                             st.error(f"No se pudo actualizar la contraseña: {e}")
 
+        # --- Asignar aleatoriamente pedidos ---
+        with tabs[2]:
+            st.subheader("Asignación aleatoria de pedidos (usr_pick)")
+            txt = st.text_input("Usuarios (separados por coma)", value="usr1, usr2, usr3, usr4")
+            pickers = [p.strip() for p in txt.split(",") if p.strip()]
+
+            modo = st.radio(
+                "¿Qué pedidos querés afectar?",
+                ["Todos los pedidos (reasignar)", "Solo los que no tienen usr_pick"],
+                index=0
+            )
+            mode_key = "all" if modo.startswith("Todos") else "missing"
+
+            col_a, col_b = st.columns([1,2])
+            with col_a:
+                btn_assign = st.button("Asignar ahora", type="primary", use_container_width=True)
+
+            if btn_assign:
+                if not pickers:
+                    st.error("Ingresá al menos un usuario.")
+                else:
+                    try:
+                        pedidos, filas = bulk_assign_usr_pick(pickers, mode=mode_key)
+                        st.success(f"Listo ✅ Asigné {pedidos} pedidos. (Filas afectadas aprox: {filas})")
+                        st.cache_data.clear()
+                    except Exception as e:
+                        st.error(f"No se pudo completar la asignación: {e}")
+
+# ================== LOGIN ==================
 def require_login():
     if "user" not in st.session_state:
         st.session_state.user = None
