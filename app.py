@@ -25,10 +25,28 @@ h1, h2, h3 {
 .card {
   border: 1px solid #e9e9e9; border-radius: 12px; padding: 12px 14px;
   box-shadow: 0 2px 10px rgba(0,0,0,0.04); background: #fff; height: 100%;
+  overflow: visible; /* <-- FIX: que nada se esconda dentro de la tarjeta */
 }
 .card h4 { margin: 0 0 6px 0; font-size: 1rem; }
 .card small { color: #666; }
-.card .stButton>button { width: 100%; border-radius: 8px; padding: 6px 10px; }
+
+/* Columnas sin recortes */
+div[data-testid="column"] { overflow: visible !important; }
+
+/* Contenedor del botón y botón a ancho completo + robusto */
+div.stButton { width: 100%; display: block; }
+div.stButton > button {
+  width: 100% !important;
+  box-sizing: border-box !important;
+  min-height: 40px;
+  padding: 10px 14px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1 !important;
+  white-space: nowrap;
+  border-radius: 8px;
+}
 
 /* Botones Streamlit: colores según "type" */
 .stButton>button[kind="primary"] {
@@ -164,7 +182,7 @@ def render_setup_panel():
     with st.expander("🛠️ Setup rápido (solo una vez)"):
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("Crear tabla 'usuarios'"):
+            if st.button("Crear tabla 'usuarios'", use_container_width=True):
                 try:
                     ensure_usuarios_table()
                     st.success("Tabla 'usuarios' creada/verificada.")
@@ -172,7 +190,7 @@ def render_setup_panel():
                     st.error(f"No se pudo crear/verificar la tabla: {e}")
         with col2:
             tok = st.text_input("Token de setup", type="password")
-            if st.button("Crear admin por defecto (admin / Admin123!)", type="secondary"):
+            if st.button("Crear admin por defecto (admin / Admin123!)", type="secondary", use_container_width=True):
                 try:
                     ensure_usuarios_table()
                     if tok != st.secrets.get("SETUP_TOKEN"):
@@ -590,9 +608,9 @@ def page_list():
                 st.markdown('<div class="card">', unsafe_allow_html=True)
                 st.markdown(f"<h4>Pedido #{numero}</h4>", unsafe_allow_html=True)
                 st.markdown(f"<div><small>Cliente:</small> <b>{cliente}</b></div>", unsafe_allow_html=True)
-                st.progress(pct/100)
+                st.progress(pct/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct}%)")
-                if st.button("Ver detalle", key=f"open_{numero}"):
+                if st.button("Ver detalle", key=f"open_{numero}", use_container_width=True):
                     st.session_state.selected_pedido = int(numero)
                     go("detail")
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -632,7 +650,7 @@ def render_team_dashboard():
                 st.caption(f"Pedidos: {pedidos} · Ítems: {items}")
                 st.progress((qty_picked/qty_total) if qty_total > 0 else 0.0)
                 st.caption(f"Avance por cantidades: {int(qty_picked)}/{int(qty_total)} ({pct}%)")
-                if st.button("Ver pedidos", key=f"ver_{usuario}"):
+                if st.button("Ver pedidos", key=f"ver_{usuario}", use_container_width=True):
                     st.session_state.team_selected_user = usuario
                     go("team_user")
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -643,7 +661,7 @@ def page_team_user_orders():
     sel = st.session_state.get("team_selected_user")
     if not sel:
         st.warning("No hay un usuario seleccionado.")
-        if st.button("Volver al equipo"):
+        if st.button("Volver al equipo", use_container_width=True):
             go("team")
         return
 
@@ -656,8 +674,8 @@ def page_team_user_orders():
         r = r.iloc[0]
         qty_total = float(r.get("qty_total", 0) or 0)
         qty_picked = float(r.get("qty_picked", 0) or 0)
-        pct = int((qty_picked/qty_total)*100) if qty_total > 0 else 0
         st.progress((qty_picked/qty_total) if qty_total > 0 else 0.0)
+        pct = int((qty_picked/qty_total)*100) if qty_total > 0 else 0
         st.caption(f"Avance por cantidades: {int(qty_picked)}/{int(qty_total)} ({pct}%)")
 
     # Buscador
@@ -669,7 +687,7 @@ def page_team_user_orders():
         st.info("No hay pedidos para este usuario.")
         c1, c2 = st.columns([1,1])
         with c1:
-            st.button("Volver al equipo", on_click=go, args=("team",), use_container_width=True)
+            st.button("← Volver al equipo", on_click=go, args=("team",), use_container_width=True)
         with c2:
             st.button("Ir a Pedidos", on_click=go, args=("list",), use_container_width=True)
         return
@@ -693,7 +711,7 @@ def page_team_user_orders():
                 st.markdown(f"<div><small>Cliente:</small> <b>{cliente}</b></div>", unsafe_allow_html=True)
                 st.progress(pct_card/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct_card}%)")
-                if st.button("Ver detalle", key=f"open_user_{sel}_{numero}"):
+                if st.button("Ver detalle", key=f"open_user_{sel}_{numero}", use_container_width=True):
                     st.session_state.selected_pedido = int(numero)
                     go("detail")
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -713,14 +731,14 @@ def page_detail():
 
     if not numero:
         st.warning("No hay pedido seleccionado.")
-        if st.button("Volver a pedidos"):
+        if st.button("Volver a pedidos", use_container_width=True):
             go("list")
         return
 
     # Seguridad: si es picker, solo puede abrir si usr_pick = su usuario
     if not user_can_open_order(numero, uname, role):
         st.error("No tenés acceso a este pedido (usr_pick no coincide con tu usuario).")
-        if st.button("Volver a pedidos"):
+        if st.button("Volver a pedidos", use_container_width=True):
             go("list")
         return
 
