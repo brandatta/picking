@@ -265,6 +265,17 @@ def require_login():
         st.session_state.selected_pedido = None
 
     if st.session_state.user is None:
+        # ===== Ocultar header/toolbar y reducir padding SOLO en login =====
+        st.markdown("""
+        <style>
+        header[data-testid="stHeader"] { display: none; }     /* Oculta barra superior nativa */
+        div[data-testid="stToolbar"] { display: none; }       /* Oculta toolbar */
+        .block-container { padding-top: 0 !important; }       /* Sin espacio arriba */
+        .login-card { margin: 4vh auto !important; }          /* Ajusta posición de la tarjeta */
+        </style>
+        """, unsafe_allow_html=True)
+
+        # Pantalla de login
         st.markdown('<div class="login-card">', unsafe_allow_html=True)
         st.header("Iniciar sesión")
         username = st.text_input("Usuario").strip()
@@ -524,7 +535,7 @@ def page_detail():
                 </div>''', unsafe_allow_html=True)
         with c_right:
             btn_type = "primary" if active else "secondary"
-            if st.button("Picking", key=f"btn_{key}", type="btn", use_container_width=True):
+            if st.button("Picking", key=f"btn_{key}", type=btn_type, use_container_width=True):
                 st.session_state[key] = not active
                 st.rerun()
 
