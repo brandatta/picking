@@ -104,6 +104,21 @@ def create_user(username: str, plain_password: str, nombre: str, rol: str):
     )
     conn.commit(); cur.close(); conn.close()
 
+def list_users():
+    """Devuelve [(username, rol)] ordenados por username."""
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT username, rol FROM usuarios ORDER BY username")
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return rows
+
+def set_password(username: str, new_password: str):
+    """Resetea la contraseña de un usuario (hash bcrypt)."""
+    conn = get_conn(); cur = conn.cursor()
+    hashed = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode()
+    cur.execute("UPDATE usuarios SET password_hash=%s WHERE username=%s", (hashed, username))
+    conn.commit(); cur.close(); conn.close()
+
 def get_user_role():
     u = st.session_state.get("user")
     return (u or {}).get("rol")
@@ -172,6 +187,74 @@ def render_setup_panel():
                             st.success("Usuario 'admin' creado. Probá iniciar sesión.")
                 except Exception as e:
                     st.error(f"No se pudo crear el admin: {e}")
+
+def render_user_admin_panel():
+    """Panel UI de administración de usuarios (solo admin)."""
+    u = st.session_state.get("user")
+    if not u or u.get("rol") != "admin":
+        return
+
+    with st.expander("⚙️ Administración – Usuarios"):
+        tabs = st.tabs(["➕ Crear usuario", "🔁 Resetear contraseña"])
+
+        # --- Crear usuario ---
+        with tabs[0]:
+            c1, c2 = st.columns(2)
+            with c1:
+                new_username = st.text_input("Usuario (nuevo)")
+                new_nombre   = st.text_input("Nombre")
+                new_rol      = st.selectbox("Rol", options=["picker", "operador", "admin"], index=0)
+            with c2:
+                p1 = st.text_input("Contraseña", type="password")
+                p2 = st.text_input("Repetir contraseña", type="password")
+                st.caption("Sugerido: mínimo 6 caracteres, combiná letras y números.")
+
+            btn = st.button("Crear usuario", type="primary", use_container_width=True)
+            if btn:
+                if not new_username or not p1 or not p2:
+                    st.error("Completá usuario y contraseñas.")
+                elif p1 != p2:
+                    st.error("Las contraseñas no coinciden.")
+                elif len(p1) < 6:
+                    st.error("La contraseña debe tener al menos 6 caracteres.")
+                else:
+                    try:
+                        conn = get_conn(); cur = conn.cursor()
+                        cur.execute("SELECT COUNT(*) FROM usuarios WHERE username=%s", (new_username,))
+                        exists = cur.fetchone()[0] > 0
+                        cur.close(); conn.close()
+                        if exists:
+                            st.error(f"El usuario '{new_username}' ya existe.")
+                        else:
+                            create_user(new_username, p1, new_nombre or new_username, new_rol)
+                            st.success(f"Usuario '{new_username}' creado con rol '{new_rol}'.")
+                    except Exception as e:
+                        st.error(f"No se pudo crear el usuario: {e}")
+
+        # --- Resetear contraseña ---
+        with tabs[1]:
+            users = list_users()
+            if not users:
+                st.info("No hay usuarios para mostrar.")
+            else:
+                usernames = [u for (u, r) in users]
+                sel_user = st.selectbox("Usuario", options=usernames)
+                np1 = st.text_input("Nueva contraseña", type="password", key="np1")
+                np2 = st.text_input("Repetir nueva contraseña", type="password", key="np2")
+                btn_reset = st.button("Resetear contraseña", type="secondary", use_container_width=True)
+                if btn_reset:
+                    if not np1 or not np2:
+                        st.error("Completá ambas contraseñas.")
+                    elif np1 != np2:
+                        st.error("Las contraseñas no coinciden.")
+                    elif len(np1) < 6:
+                        st.error("La contraseña debe tener al menos 6 caracteres.")
+                    else:
+                        try:
+                            set_password(sel_user, np1)
+                            st.success(f"Contraseña de '{sel_user}' actualizada.")
+                        except Exception as e:
+                            st.error(f"No se pudo actualizar la contraseña: {e}")
 
 def require_login():
     if "user" not in st.session_state:
@@ -292,7 +375,8 @@ def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
         "UPDATE sap SET PICKING = %s WHERE NUMERO = %s AND CODIGO = %s",
         [(flag, numero, codigo) for (codigo, flag) in sku_to_flag]
     )
-    conn.commit(); cur.close(); conn.close()
+    conn.commit()
+    cur.close(); conn.close()
 
 # ================== STATE HELPERS ==================
 def go(page: str):
@@ -440,7 +524,7 @@ def page_detail():
                 </div>''', unsafe_allow_html=True)
         with c_right:
             btn_type = "primary" if active else "secondary"
-            if st.button("Picking", key=f"btn_{key}", type=btn_type, use_container_width=True):
+            if st.button("Picking", key=f"btn_{key}", type="btn", use_container_width=True):
                 st.session_state[key] = not active
                 st.rerun()
 
@@ -466,6 +550,11 @@ def page_detail():
 # ================== APP ==================
 if require_login():
     render_topbar()
+
+    # Panel de administración de usuarios (solo admin)
+    if st.session_state.get("user", {}).get("rol") == "admin":
+        render_user_admin_panel()
+
     if st.session_state.page == "list":
         page_list()
     elif st.session_state.page == "detail":
