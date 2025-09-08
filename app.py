@@ -142,13 +142,11 @@ def validar_usuario(username: str, password: str):
 
     stored = user.get("password_hash")
     if not stored or not isinstance(stored, str) or not stored.startswith("$2"):
-        # hash mal formado o no bcrypt
         return None
 
     try:
         ok = bcrypt.checkpw(password.encode("utf-8"), stored.encode("utf-8"))
     except ValueError:
-        # e.g., "Invalid salt"
         return None
 
     return user if ok else None
@@ -156,10 +154,15 @@ def validar_usuario(username: str, password: str):
 def render_setup_panel():
     """
     Panel de setup rápido: crear tabla y crear admin por defecto (admin/Admin123!).
-    Se oculta automáticamente si ya existe al menos un usuario.
-    Si existe SETUP_TOKEN en secrets, lo pide; si no, no.
+    Se oculta si:
+      - ya existe al menos un usuario, o
+      - NO hay SETUP_TOKEN configurado en secrets.
     """
-    # Ocultar si ya hay usuarios
+    # 1) Si no hay SETUP_TOKEN, no mostrar el panel
+    if st.secrets.get("SETUP_TOKEN") is None:
+        return
+
+    # 2) Asegurar tabla y ocultar si ya hay usuarios
     try:
         ensure_usuarios_table()
         if count_usuarios() > 0:
@@ -178,13 +181,12 @@ def render_setup_panel():
                     st.error(f"No se pudo crear/verificar la tabla: {e}")
 
         with col2:
-            need_token = st.secrets.get("SETUP_TOKEN") is not None
-            tok = st.text_input("Token (si corresponde)", type="password") if need_token else None
+            tok = st.text_input("Token de setup", type="password")
 
             if st.button("Crear admin por defecto (admin / Admin123!)", type="secondary"):
                 try:
                     ensure_usuarios_table()
-                    if need_token and tok != st.secrets.get("SETUP_TOKEN"):
+                    if tok != st.secrets.get("SETUP_TOKEN"):
                         st.error("Token inválido.")
                     else:
                         # Evitar duplicar admin
@@ -225,9 +227,9 @@ def require_login():
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # Mostrar setup solo si no hay usuarios
+        # Mostrar setup solo si no hay usuarios y existe SETUP_TOKEN
         try:
-            if count_usuarios() == 0:
+            if count_usuarios() == 0 and st.secrets.get("SETUP_TOKEN") is not None:
                 render_setup_panel()
         except Exception as e:
             st.error(f"Error verificando usuarios: {e}")
