@@ -688,7 +688,12 @@ def page_team_user_orders():
             go("team")
         return
 
-    st.subheader(f"Pedidos de: {sel}")
+    # Encabezado con botón de volver (arriba a la derecha)
+    h_left, h_right = st.columns([3,1])
+    with h_left:
+        st.subheader(f"Pedidos de: {sel}")
+    with h_right:
+        st.button("← Seleccionar otro usuario", on_click=go, args=("team",), use_container_width=True)
 
     # Muestra progreso del usuario arriba
     dfp = get_user_progress()
@@ -740,6 +745,7 @@ def page_team_user_orders():
                 st.markdown("</div>", unsafe_allow_html=True)
             i2 += 1
 
+    # Navegación inferior (opcional, lo dejé)
     c1, c2 = st.columns([1,1])
     with c1:
         st.button("← Volver al equipo", on_click=go, args=("team",), use_container_width=True)
