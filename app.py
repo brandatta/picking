@@ -11,7 +11,7 @@ st.markdown("""
 <style>
 .block-container { padding-top: 2.5rem !important; }
 
-/* Títulos */
+/* Evitar que se corte el título */
 h1, h2, h3 {
   margin-top: 0.2rem !important;
   margin-bottom: 0.8rem !important;
@@ -28,7 +28,7 @@ h1, h2, h3 {
 .card small { color: #666; }
 .card .stButton>button { width: 100%; border-radius: 8px; padding: 6px 10px; }
 
-/* Botones por "type" */
+/* Botones Streamlit: colores según "type" */
 .stButton>button[kind="primary"] {
   background-color: #28a745 !important; color: #fff !important; border: 1px solid #28a745 !important;
 }
@@ -36,7 +36,9 @@ h1, h2, h3 {
 .stButton>button[kind="secondary"] {
   background-color: #ffffff !important; color: #333 !important; border: 1px solid #d9d9d9 !important;
 }
-.stButton>button[kind="secondary"]:hover { background-color: #f5f5f5 !important; color: #000 !important; border-color: #cfcfcf !important; }
+.stButton>button[kind="secondary"]:hover {
+  background-color: #f5f5f5 !important; color: #000 !important; border-color: #cfcfcf !important;
+}
 
 /* Filas */
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
@@ -110,46 +112,6 @@ def get_username():
     u = st.session_state.get("user")
     return (u or {}).get("username")
 
-# ================== TABLA ASIGNACIONES (SEGURIDAD POR PEDIDO) ==================
-def ensure_asignaciones_table():
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS picking_asignaciones (
-            NUMERO BIGINT NOT NULL,
-            username VARCHAR(50) NOT NULL,
-            asignado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (NUMERO, username),
-            INDEX (username)
-        )
-    """)
-    conn.commit(); cur.close(); conn.close()
-
-def list_pickers():
-    """Lista usuarios con rol 'picker' (o 'operador') para asignar."""
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT username FROM usuarios WHERE rol IN ('picker','operador')")
-    users = [r[0] for r in cur.fetchall()]
-    cur.close(); conn.close()
-    return users
-
-def assign_order(numero: int, username: str):
-    ensure_asignaciones_table()
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("REPLACE INTO picking_asignaciones (NUMERO, username) VALUES (%s, %s)", (numero, username))
-    conn.commit(); cur.close(); conn.close()
-
-def unassign_order(numero: int, username: str):
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("DELETE FROM picking_asignaciones WHERE NUMERO = %s AND username = %s", (numero, username))
-    conn.commit(); cur.close(); conn.close()
-
-def is_order_assigned_to_user(numero: int, username: str) -> bool:
-    conn = get_conn(); cur = conn.cursor()
-    cur.execute("SELECT 1 FROM picking_asignaciones WHERE NUMERO = %s AND username = %s LIMIT 1", (numero, username))
-    ok = cur.fetchone() is not None
-    cur.close(); conn.close()
-    return ok
-
 # ================== AUTH ==================
 def validar_usuario(username: str, password: str):
     if not username or not password:
@@ -211,27 +173,6 @@ def render_setup_panel():
                 except Exception as e:
                     st.error(f"No se pudo crear el admin: {e}")
 
-def render_admin_tools():
-    """Panel admin para crear usuario 'picker_test'."""
-    if get_user_role() != "admin":
-        return
-    with st.expander("⚙️ Administración - usuarios de prueba"):
-        if st.button("Crear usuario de prueba 'picker_test' / 'Picker123!' (rol: picker)"):
-            try:
-                ensure_usuarios_table()
-                # Evitar duplicado
-                conn = get_conn(); cur = conn.cursor()
-                cur.execute("SELECT COUNT(*) FROM usuarios WHERE username=%s", ("picker_test",))
-                exists = cur.fetchone()[0] > 0
-                cur.close(); conn.close()
-                if exists:
-                    st.info("El usuario 'picker_test' ya existe.")
-                else:
-                    create_user("picker_test", "Picker123!", "Picker Test", "picker")
-                    st.success("Usuario 'picker_test' creado.")
-            except Exception as e:
-                st.error(f"No se pudo crear el usuario de prueba: {e}")
-
 def require_login():
     if "user" not in st.session_state:
         st.session_state.user = None
@@ -276,35 +217,30 @@ def require_login():
         return False
     return True
 
-# ================== DATA ACCESS ==================
+# ================== DATA ACCESS (filtrado por usr_pick) ==================
 @st.cache_data(ttl=30)
-def get_orders(buscar: str | None = None, current_username: str | None = None, current_role: str | None = None) -> pd.DataFrame:
+def get_orders(buscar: str | None = None,
+               current_username: str | None = None,
+               current_role: str | None = None) -> pd.DataFrame:
     """
-    - Admin/operador: ve todos los pedidos (con filtro opcional buscar)
-    - Picker: solo ve pedidos asignados (join con picking_asignaciones)
+    - Admin/operador: ven todos los pedidos.
+    - Picker: solo ve pedidos donde sap.usr_pick = current_username.
     """
-    ensure_asignaciones_table()
-
     params = []
-    if current_role in ("picker",):
-        # Picker: limitar por asignaciones
-        base = """
-            SELECT DISTINCT s.NUMERO, s.CLIENTE
-            FROM sap s
-            INNER JOIN picking_asignaciones pa ON pa.NUMERO = s.NUMERO AND pa.username = %s
-        """
+    if current_role == "picker":
+        base = "SELECT DISTINCT NUMERO, CLIENTE FROM sap WHERE usr_pick = %s"
         params.append(current_username)
+        if buscar:
+            base += " AND (CAST(NUMERO AS CHAR) LIKE %s OR CLIENTE LIKE %s)"
+            params.extend([f"%{buscar}%", f"%{buscar}%"])
+        q = base + " ORDER BY NUMERO DESC LIMIT 150"
     else:
         base = "SELECT DISTINCT NUMERO, CLIENTE FROM sap"
-
-    where = []
-    if buscar:
-        where.append("(CAST(s.NUMERO AS CHAR) LIKE %s OR s.CLIENTE LIKE %s)" if current_role in ("picker",) else
-                     "(CAST(NUMERO AS CHAR) LIKE %s OR CLIENTE LIKE %s)")
-        params.extend([f"%{buscar}%", f"%{buscar}%"])
-
-    q = base + (" WHERE " + " AND ".join(where) if where else "")
-    q += " ORDER BY NUMERO DESC LIMIT 150"
+        where = []
+        if buscar:
+            where.append("(CAST(NUMERO AS CHAR) LIKE %s OR CLIENTE LIKE %s)")
+            params.extend([f"%{buscar}%", f"%{buscar}%"])
+        q = base + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY NUMERO DESC LIMIT 150"
 
     conn = get_conn()
     df = pd.read_sql(q, conn, params=params)
@@ -315,6 +251,16 @@ def get_orders(buscar: str | None = None, current_username: str | None = None, c
             lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
         )
     return df
+
+def user_can_open_order(numero: int, current_username: str, current_role: str) -> bool:
+    """Pickers solo pueden abrir pedidos con usr_pick = su username. Admin/operador: siempre True."""
+    if current_role != "picker":
+        return True
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT 1 FROM sap WHERE NUMERO = %s AND usr_pick = %s LIMIT 1", (numero, current_username))
+    ok = cur.fetchone() is not None
+    cur.close(); conn.close()
+    return ok
 
 def get_order_items(numero: int) -> pd.DataFrame:
     conn = get_conn()
@@ -382,8 +328,8 @@ def page_list():
 
     st.markdown("**Resultados**")
     if orders_df.empty:
-        if role in ("picker",):
-            st.info("No tenés pedidos asignados.")
+        if role == "picker":
+            st.info("No tenés pedidos asignados (usr_pick).")
         else:
             st.info("No hay pedidos para mostrar.")
         return
@@ -425,9 +371,9 @@ def page_detail():
             go("list")
         return
 
-    # Seguridad: si es picker, solo puede abrir si está asignado
-    if role in ("picker",) and not is_order_assigned_to_user(numero, uname):
-        st.error("No tenés acceso a este pedido (no está asignado a tu usuario).")
+    # Seguridad: si es picker, solo puede abrir si usr_pick = su usuario
+    if not user_can_open_order(numero, uname, role):
+        st.error("No tenés acceso a este pedido (usr_pick no coincide con tu usuario).")
         if st.button("Volver a pedidos"):
             go("list")
         return
@@ -436,31 +382,10 @@ def page_detail():
     with left:
         st.title(f"Detalle Pedido #{numero}")
     with right:
+        st.write("")
         if st.button("Volver a pedidos", use_container_width=True):
-            go("list"); return
-
-        # Admin tools para asignar el pedido a un picker
-        if role == "admin":
-            st.markdown("**Asignación**")
-            ensure_asignaciones_table()
-            pickers = list_pickers()
-            asignado_a_mi = is_order_assigned_to_user(numero, uname) if uname else False
-            picker_sel = st.selectbox("Asignar a", options=pickers, index=0 if pickers else None)
-            colA, colB = st.columns(2)
-            with colA:
-                if st.button("Asignar", use_container_width=True):
-                    if picker_sel:
-                        assign_order(numero, picker_sel)
-                        st.success(f"Pedido #{numero} asignado a {picker_sel}.")
-                        st.cache_data.clear()
-                        st.rerun()
-            with colB:
-                if st.button("Quitar asignación", use_container_width=True):
-                    if picker_sel:
-                        unassign_order(numero, picker_sel)
-                        st.info(f"Asignación quitada para {picker_sel}.")
-                        st.cache_data.clear()
-                        st.rerun()
+            go("list")
+            return
 
     items_df = get_order_items(numero)
     if items_df.empty:
@@ -540,11 +465,8 @@ def page_detail():
 
 # ================== APP ==================
 if require_login():
-    # Panel admin para crear usuario de prueba (solo admin)
-    render_admin_tools()
-
-    # Topbar y router
+    render_topbar()
     if st.session_state.page == "list":
-        render_topbar(); page_list()
+        page_list()
     elif st.session_state.page == "detail":
-        render_topbar(); page_detail()
+        page_detail()
