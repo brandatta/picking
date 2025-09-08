@@ -156,9 +156,17 @@ def validar_usuario(username: str, password: str):
 def render_setup_panel():
     """
     Panel de setup rápido: crear tabla y crear admin por defecto (admin/Admin123!).
+    Se oculta automáticamente si ya existe al menos un usuario.
     Si existe SETUP_TOKEN en secrets, lo pide; si no, no.
-    Aparece solo si no hay usuario logueado (pantalla de login).
     """
+    # Ocultar si ya hay usuarios
+    try:
+        ensure_usuarios_table()
+        if count_usuarios() > 0:
+            return
+    except:
+        pass
+
     with st.expander("🛠️ Setup rápido (solo una vez)"):
         col1, col2 = st.columns(2)
         with col1:
@@ -217,8 +225,12 @@ def require_login():
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # Panel de setup (crear tabla/crear admin)
-        render_setup_panel()
+        # Mostrar setup solo si no hay usuarios
+        try:
+            if count_usuarios() == 0:
+                render_setup_panel()
+        except Exception as e:
+            st.error(f"Error verificando usuarios: {e}")
 
         if login_clicked:
             # Aseguramos que la tabla exista para evitar error si está vacía/recién creada
