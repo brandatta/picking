@@ -190,7 +190,7 @@ def render_setup_panel():
                 except Exception as e:
                     st.error(f"No se pudo crear el admin: {e}")
 
-# ================== ADMIN PANEL ==================
+# ================== ADMIN PANEL: asignación robusta ==================
 def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
                          chunk_size: int = 200, max_retries: int = 3) -> tuple[int, int]:
     """
@@ -413,6 +413,7 @@ def require_login():
                 st.error(f"Error preparando tabla de usuarios: {e}")
                 return False
 
+        # Validar
             user = validar_usuario(username, password)
             if user:
                 st.session_state.user = user
@@ -501,6 +502,36 @@ def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
     conn.commit()
     cur.close(); conn.close()
 
+# ======= NUEVO: progreso por usuario (usr_pick) =======
+@st.cache_data(ttl=15)
+def get_user_progress() -> pd.DataFrame:
+    """
+    Devuelve por usuario (usr_pick): pedidos, ítems, ítems pickeados, cantidades totales y pickeadas, y %.
+    """
+    q = """
+    SELECT
+      usr_pick AS usuario,
+      COUNT(DISTINCT NUMERO) AS pedidos,
+      COUNT(*) AS items,
+      SUM(CASE WHEN UPPER(COALESCE(PICKING,'N'))='Y' THEN 1 ELSE 0 END) AS items_picked,
+      SUM(COALESCE(CAST(CANTIDAD AS DECIMAL(18,4)),0)) AS qty_total,
+      SUM(CASE WHEN UPPER(COALESCE(PICKING,'N'))='Y'
+               THEN COALESCE(CAST(CANTIDAD AS DECIMAL(18,4)),0) ELSE 0 END) AS qty_picked
+    FROM sap
+    WHERE TRIM(COALESCE(usr_pick,'')) <> ''
+    GROUP BY usr_pick
+    ORDER BY usuario
+    """
+    conn = get_conn()
+    df = pd.read_sql(q, conn)
+    conn.close()
+
+    # Normalizar números y % por cantidades
+    df["qty_total"]  = pd.to_numeric(df["qty_total"], errors="coerce").fillna(0)
+    df["qty_picked"] = pd.to_numeric(df["qty_picked"], errors="coerce").fillna(0)
+    df["pct_qty"] = df.apply(lambda r: int((r["qty_picked"] / r["qty_total"]) * 100) if r["qty_total"] > 0 else 0, axis=1)
+    return df
+
 # ================== STATE HELPERS ==================
 def go(page: str):
     st.session_state.page = page
@@ -513,11 +544,17 @@ def render_topbar():
     c1, csp, c2 = st.columns([3,6,1])
     with c1:
         st.title("Pedidos (SAP)")
+    with csp:
+        # Navegación para admin/jefe
+        if u.get("rol") in ("admin", "jefe"):
+            n1, n2 = st.columns(2)
+            n1.button("📦 Pedidos", on_click=go, args=("list",), use_container_width=True)
+            n2.button("👥 Equipo",   on_click=go, args=("team",), use_container_width=True)
     with c2:
         if st.button("Cerrar sesión", use_container_width=True):
             st.session_state.user = None
             for k in list(st.session_state.keys()):
-                if k.startswith("pick_") or k.startswith("btn_pick_"):
+                if k.startswith("pick_") or k.startswith("btn_pick_") or k == "team_selected_user":
                     del st.session_state[k]
             st.rerun()
 
@@ -565,6 +602,81 @@ def page_list():
                     go("detail")
                 st.markdown("</div>", unsafe_allow_html=True)
             idx += 1
+
+# ================== PÁGINA: EQUIPO (admin/jefe) ==================
+def render_team_dashboard():
+    st.subheader("Equipo – Avance por usuario (usr_pick)")
+
+    df = get_user_progress()
+    if df.empty:
+        st.info("No hay pedidos asignados a usuarios (usr_pick está vacío).")
+        return
+
+    # Filtro por usuario
+    filtro = st.text_input("Filtrar usuario", "")
+    if filtro:
+        df = df[df["usuario"].astype(str).str.contains(filtro, case=False, na=False)]
+
+    # Tarjetas por usuario
+    idx, total = 0, len(df)
+    while idx < total:
+        cols = st.columns([1,1,1])
+        for col in cols:
+            if idx >= total: break
+            r = df.iloc[idx]
+            usuario = str(r["usuario"])
+            pedidos = int(r.get("pedidos", 0) or 0)
+            items = int(r.get("items", 0) or 0)
+            qty_total = float(r.get("qty_total", 0) or 0)
+            qty_picked = float(r.get("qty_picked", 0) or 0)
+            pct = int((qty_picked/qty_total)*100) if qty_total > 0 else 0
+
+            with col:
+                st.markdown('<div class="card">', unsafe_allow_html=True)
+                st.markdown(f"<h4>{usuario}</h4>", unsafe_allow_html=True)
+                st.caption(f"Pedidos: {pedidos} · Ítems: {items}")
+                st.progress((qty_picked/qty_total) if qty_total > 0 else 0.0)
+                st.caption(f"Avance por cantidades: {int(qty_picked)}/{int(qty_total)} ({pct}%)")
+                if st.button("Ver pedidos", key=f"ver_{usuario}"):
+                    st.session_state.team_selected_user = usuario
+                st.markdown("</div>", unsafe_allow_html=True)
+            idx += 1
+
+    # Pedidos del usuario seleccionado
+    sel = st.session_state.get("team_selected_user")
+    if sel:
+        st.markdown(f"### Pedidos de **{sel}**")
+        odf = get_orders(buscar=None, current_username=sel, current_role="picker")
+        if odf.empty:
+            st.info("No hay pedidos para este usuario.")
+        else:
+            i2, t2 = 0, len(odf)
+            while i2 < t2:
+                cols2 = st.columns([1,1,1])
+                for c in cols2:
+                    if i2 >= t2: break
+                    row = odf.iloc[i2]
+                    numero, cliente = row.NUMERO, row.CLIENTE
+                    items_df = get_order_items(numero)
+                    total_items = len(items_df)
+                    picked = (items_df["PICKING"] == "Y").sum() if total_items > 0 else 0
+                    pct_card = int((picked/total_items)*100) if total_items > 0 else 0
+
+                    with c:
+                        st.markdown('<div class="card">', unsafe_allow_html=True)
+                        st.markdown(f"<h4>Pedido #{numero}</h4>", unsafe_allow_html=True)
+                        st.markdown(f"<div><small>Cliente:</small> <b>{cliente}</b></div>", unsafe_allow_html=True)
+                        st.progress(pct_card/100 if total_items>0 else 0.0)
+                        st.caption(f"Picking: {picked}/{total_items} ({pct_card}%)")
+                        if st.button("Ver detalle", key=f"open_user_{sel}_{numero}"):
+                            st.session_state.selected_pedido = int(numero)
+                            go("detail")
+                        st.markdown("</div>", unsafe_allow_html=True)
+                    i2 += 1
+
+        if st.button("Volver al resumen de usuarios"):
+            st.session_state.pop("team_selected_user", None)
+            st.rerun()
 
 # ================== PÁGINA: DETALLE ==================
 def page_detail():
@@ -680,5 +792,7 @@ if require_login():
 
     if st.session_state.page == "list":
         page_list()
+    elif st.session_state.page == "team":
+        render_team_dashboard()
     elif st.session_state.page == "detail":
         page_detail()
