@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import mysql.connector
 import bcrypt
-import random  # <- para asignación aleatoria
-import time    # <- para backoff en reintentos
+import random   # asignación aleatoria
+import time     # backoff en reintentos
 
 # ================== CONFIG ==================
 st.set_page_config(page_title="Picking - Pedidos (SAP)", layout="wide")
@@ -29,9 +29,6 @@ h1, h2, h3 {
 .card h4 { margin: 0 0 6px 0; font-size: 1rem; }
 .card small { color: #666; }
 .card .stButton>button { width: 100%; border-radius: 8px; padding: 6px 10px; }
-
-/* Tarjeta resaltada cuando el usuario está en foco */
-.focus-card { border: 2px solid #28a745 !important; }
 
 /* Botones Streamlit: colores según "type" */
 .stButton>button[kind="primary"] {
@@ -65,16 +62,6 @@ h1, h2, h3 {
 .login-card { max-width: 420px; margin: 8vh auto; padding: 24px;
   border: 1px solid #eee; border-radius: 12px; background: #fff;
   box-shadow: 0 2px 14px rgba(0,0,0,0.04); }
-
-/* Barra de foco del usuario */
-.focus-info {
-  background: #fffbe6; border: 1px solid #ffe58f; border-radius: 10px;
-  padding: 8px 10px; display: flex; align-items: center; gap: 10px; margin-top: 6px;
-}
-.focus-pill {
-  background: #fff1b8; border: 1px solid #ffe58f; border-radius: 999px;
-  padding: 2px 10px; font-weight: 600;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -383,6 +370,8 @@ def require_login():
         st.session_state.page = "list"
     if "selected_pedido" not in st.session_state:
         st.session_state.selected_pedido = None
+    if "team_selected_user" not in st.session_state:
+        st.session_state.team_selected_user = None
 
     if st.session_state.user is None:
         # Ocultar header/toolbar y reducir padding SOLO en login
@@ -431,13 +420,13 @@ def require_login():
         return False
     return True
 
-# ================== DATA ACCESS (filtrado por usr_pick) ==================
+# ================== DATA ACCESS ==================
 @st.cache_data(ttl=30)
 def get_orders(buscar: str | None = None,
                current_username: str | None = None,
                current_role: str | None = None) -> pd.DataFrame:
     """
-    - Admin/operador/jefe: ven todos los pedidos (incluye usr_pick para destacar foco).
+    - Admin/operador/jefe: ven todos los pedidos (incluye usr_pick).
     - Picker: solo ve pedidos donde sap.usr_pick = current_username.
     """
     params = []
@@ -467,7 +456,7 @@ def get_orders(buscar: str | None = None,
     return df
 
 def user_can_open_order(numero: int, current_username: str, current_role: str) -> bool:
-    """Pickers solo pueden abrir pedidos con usr_pick = su username. Otros roles (admin/operador/jefe): True."""
+    """Pickers solo pueden abrir pedidos con usr_pick = su usuario. Otros roles (admin/operador/jefe): True."""
     if current_role != "picker":
         return True
     conn = get_conn(); cur = conn.cursor()
@@ -509,7 +498,7 @@ def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
     conn.commit()
     cur.close(); conn.close()
 
-# ======= NUEVO: progreso por usuario (usr_pick) =======
+# ======= Progreso por usuario (usr_pick) =======
 @st.cache_data(ttl=15)
 def get_user_progress() -> pd.DataFrame:
     """
@@ -542,14 +531,6 @@ def get_user_progress() -> pd.DataFrame:
 def go(page: str):
     st.session_state.page = page
 
-def set_user_focus(username: str):
-    st.session_state["user_focus"] = username
-    st.session_state["team_selected_user"] = username  # mantiene compatibilidad con la vista de equipo
-
-def clear_user_focus():
-    st.session_state.pop("user_focus", None)
-    st.session_state.pop("team_selected_user", None)
-
 # ================== LAYOUT: TOP BAR (usuario) ==================
 def render_topbar():
     u = st.session_state.user
@@ -564,19 +545,11 @@ def render_topbar():
             n1, n2 = st.columns(2)
             n1.button("📦 Pedidos", on_click=go, args=("list",), use_container_width=True)
             n2.button("👥 Equipo",   on_click=go, args=("team",), use_container_width=True)
-            # Muestra foco si existe
-            focus_user = st.session_state.get("user_focus")
-            if focus_user:
-                colf1, colf2 = st.columns([5,1])
-                with colf1:
-                    st.markdown(f'<div class="focus-info">👤 En foco: <span class="focus-pill">{focus_user}</span></div>', unsafe_allow_html=True)
-                with colf2:
-                    st.button("Quitar foco", on_click=clear_user_focus, use_container_width=True)
     with c2:
         if st.button("Cerrar sesión", use_container_width=True):
             st.session_state.user = None
             for k in list(st.session_state.keys()):
-                if k.startswith("pick_") or k.startswith("btn_pick_") or k in ("team_selected_user","user_focus"):
+                if k.startswith("pick_") or k.startswith("btn_pick_"):
                     del st.session_state[k]
             st.rerun()
 
@@ -584,13 +557,8 @@ def render_topbar():
 def page_list():
     role = get_user_role()
     uname = get_username()
-    focus_user = st.session_state.get("user_focus")
 
     st.subheader("Listado de pedidos")
-    # Si hay foco y el rol es admin/jefe, lo recordamos visualmente
-    if focus_user and role in ("admin","jefe"):
-        st.markdown(f'<div class="focus-info">👤 Viendo pedidos con foco en: <span class="focus-pill">{focus_user}</span></div>', unsafe_allow_html=True)
-
     c1, _ = st.columns([2,1])
     with c1:
         buscar = st.text_input("Buscar por cliente o número de pedido", placeholder="Ej: DIA o 100023120")
@@ -612,25 +580,16 @@ def page_list():
             if idx >= total: break
             row = orders_df.iloc[idx]
             numero, cliente = row.NUMERO, row.CLIENTE
-            asignado_a = None
-            if "usr_pick" in orders_df.columns:
-                asignado_a = str(row["usr_pick"]) if pd.notna(row["usr_pick"]) and str(row["usr_pick"]).strip() != "" else None
 
             items = get_order_items(numero)
             total_items = len(items)
             picked = (items["PICKING"] == "Y").sum() if total_items > 0 else 0
             pct = int((picked / total_items) * 100) if total_items > 0 else 0
 
-            # Si hay foco y coincide, resaltamos la tarjeta
-            is_focus_card = bool(focus_user and asignado_a and focus_user.lower() == str(asignado_a).lower())
-            card_class = "card focus-card" if is_focus_card else "card"
-
             with col:
-                st.markdown(f'<div class="{card_class}">', unsafe_allow_html=True)
+                st.markdown('<div class="card">', unsafe_allow_html=True)
                 st.markdown(f"<h4>Pedido #{numero}</h4>", unsafe_allow_html=True)
                 st.markdown(f"<div><small>Cliente:</small> <b>{cliente}</b></div>", unsafe_allow_html=True)
-                if asignado_a and role in ("admin","jefe"):
-                    st.caption(f"Asignado a: {asignado_a}")
                 st.progress(pct/100)
                 st.caption(f"Picking: {picked}/{total_items} ({pct}%)")
                 if st.button("Ver detalle", key=f"open_{numero}"):
@@ -674,47 +633,77 @@ def render_team_dashboard():
                 st.progress((qty_picked/qty_total) if qty_total > 0 else 0.0)
                 st.caption(f"Avance por cantidades: {int(qty_picked)}/{int(qty_total)} ({pct}%)")
                 if st.button("Ver pedidos", key=f"ver_{usuario}"):
-                    set_user_focus(usuario)  # fija foco global y selecciona en la vista
+                    st.session_state.team_selected_user = usuario
+                    go("team_user")
                 st.markdown("</div>", unsafe_allow_html=True)
             idx += 1
 
-    # Pedidos del usuario seleccionado
+# ================== PÁGINA: PEDIDOS DEL USUARIO (admin/jefe) ==================
+def page_team_user_orders():
     sel = st.session_state.get("team_selected_user")
-    if sel:
-        st.markdown(f'<div class="focus-info">👤 Usuario en foco: <span class="focus-pill">{sel}</span></div>', unsafe_allow_html=True)
-        odf = get_orders(buscar=None, current_username=sel, current_role="picker")
-        if odf.empty:
-            st.info("No hay pedidos para este usuario.")
-        else:
-            i2, t2 = 0, len(odf)
-            while i2 < t2:
-                cols2 = st.columns([1,1,1])
-                for c in cols2:
-                    if i2 >= t2: break
-                    row = odf.iloc[i2]
-                    numero, cliente = row.NUMERO, row.CLIENTE
-                    items_df = get_order_items(numero)
-                    total_items = len(items_df)
-                    picked = (items_df["PICKING"] == "Y").sum() if total_items > 0 else 0
-                    pct_card = int((picked/total_items)*100) if total_items > 0 else 0
+    if not sel:
+        st.warning("No hay un usuario seleccionado.")
+        if st.button("Volver al equipo"):
+            go("team")
+        return
 
-                    with c:
-                        st.markdown('<div class="card focus-card">', unsafe_allow_html=True)
-                        st.markdown(f"<h4>Pedido #{numero}</h4>", unsafe_allow_html=True)
-                        st.markdown(f"<div><small>Cliente:</small> <b>{cliente}</b></div>", unsafe_allow_html=True)
-                        st.progress(pct_card/100 if total_items>0 else 0.0)
-                        st.caption(f"Picking: {picked}/{total_items} ({pct_card}%)")
-                        if st.button("Ver detalle", key=f"open_user_{sel}_{numero}"):
-                            st.session_state.selected_pedido = int(numero)
-                            go("detail")
-                        st.markdown("</div>", unsafe_allow_html=True)
-                    i2 += 1
+    st.subheader(f"Pedidos de: {sel}")
 
+    # Muestra progreso del usuario arriba (usando el mismo agregado que en el dashboard)
+    dfp = get_user_progress()
+    r = dfp[dfp["usuario"].astype(str).str.lower() == sel.lower()]
+    if not r.empty:
+        r = r.iloc[0]
+        qty_total = float(r.get("qty_total", 0) or 0)
+        qty_picked = float(r.get("qty_picked", 0) or 0)
+        pct = int((qty_picked/qty_total)*100) if qty_total > 0 else 0
+        st.progress((qty_picked/qty_total) if qty_total > 0 else 0.0)
+        st.caption(f"Avance por cantidades: {int(qty_picked)}/{int(qty_total)} ({pct}%)")
+
+    # Buscador
+    buscar = st.text_input("Buscar por cliente o número de pedido (solo de este usuario)")
+
+    # Trae pedidos del usuario como si fuera un picker
+    odf = get_orders(buscar=buscar, current_username=sel, current_role="picker")
+    if odf.empty:
+        st.info("No hay pedidos para este usuario.")
         c1, c2 = st.columns([1,1])
         with c1:
-            st.button("Volver al resumen de usuarios", on_click=lambda: st.session_state.pop("team_selected_user", None), use_container_width=True)
+            st.button("Volver al equipo", on_click=go, args=("team",), use_container_width=True)
         with c2:
-            st.button("Quitar foco", on_click=clear_user_focus, use_container_width=True)
+            st.button("Ir a Pedidos", on_click=go, args=("list",), use_container_width=True)
+        return
+
+    # Tarjetas de pedidos
+    i2, t2 = 0, len(odf)
+    while i2 < t2:
+        cols2 = st.columns([1,1,1])
+        for c in cols2:
+            if i2 >= t2: break
+            row = odf.iloc[i2]
+            numero, cliente = row.NUMERO, row.CLIENTE
+            items_df = get_order_items(numero)
+            total_items = len(items_df)
+            picked = (items_df["PICKING"] == "Y").sum() if total_items > 0 else 0
+            pct_card = int((picked/total_items)*100) if total_items > 0 else 0
+
+            with c:
+                st.markdown('<div class="card">', unsafe_allow_html=True)
+                st.markdown(f"<h4>Pedido #{numero}</h4>", unsafe_allow_html=True)
+                st.markdown(f"<div><small>Cliente:</small> <b>{cliente}</b></div>", unsafe_allow_html=True)
+                st.progress(pct_card/100 if total_items>0 else 0.0)
+                st.caption(f"Picking: {picked}/{total_items} ({pct_card}%)")
+                if st.button("Ver detalle", key=f"open_user_{sel}_{numero}"):
+                    st.session_state.selected_pedido = int(numero)
+                    go("detail")
+                st.markdown("</div>", unsafe_allow_html=True)
+            i2 += 1
+
+    c1, c2 = st.columns([1,1])
+    with c1:
+        st.button("← Volver al equipo", on_click=go, args=("team",), use_container_width=True)
+    with c2:
+        st.button("Ir a Pedidos", on_click=go, args=("list",), use_container_width=True)
 
 # ================== PÁGINA: DETALLE ==================
 def page_detail():
@@ -832,5 +821,7 @@ if require_login():
         page_list()
     elif st.session_state.page == "team":
         render_team_dashboard()
+    elif st.session_state.page == "team_user":
+        page_team_user_orders()
     elif st.session_state.page == "detail":
         page_detail()
