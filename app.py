@@ -203,7 +203,7 @@ def render_user_admin_panel():
             with c1:
                 new_username = st.text_input("Usuario (nuevo)")
                 new_nombre   = st.text_input("Nombre")
-                new_rol      = st.selectbox("Rol", options=["picker", "operador", "admin"], index=0)
+                new_rol      = st.selectbox("Rol", options=["picker", "operador", "jefe", "admin"], index=0)
             with c2:
                 p1 = st.text_input("Contraseña", type="password")
                 p2 = st.text_input("Repetir contraseña", type="password")
@@ -268,10 +268,10 @@ def require_login():
         # ===== Ocultar header/toolbar y reducir padding SOLO en login =====
         st.markdown("""
         <style>
-        header[data-testid="stHeader"] { display: none; }     /* Oculta barra superior nativa */
-        div[data-testid="stToolbar"] { display: none; }       /* Oculta toolbar */
-        .block-container { padding-top: 0 !important; }       /* Sin espacio arriba */
-        .login-card { margin: 4vh auto !important; }          /* Ajusta posición de la tarjeta */
+        header[data-testid="stHeader"] { display: none; }
+        div[data-testid="stToolbar"] { display: none; }
+        .block-container { padding-top: 0 !important; }
+        .login-card { margin: 4vh auto !important; }
         </style>
         """, unsafe_allow_html=True)
 
@@ -317,7 +317,7 @@ def get_orders(buscar: str | None = None,
                current_username: str | None = None,
                current_role: str | None = None) -> pd.DataFrame:
     """
-    - Admin/operador: ven todos los pedidos.
+    - Admin/operador/jefe: ven todos los pedidos.
     - Picker: solo ve pedidos donde sap.usr_pick = current_username.
     """
     params = []
@@ -347,7 +347,7 @@ def get_orders(buscar: str | None = None,
     return df
 
 def user_can_open_order(numero: int, current_username: str, current_role: str) -> bool:
-    """Pickers solo pueden abrir pedidos con usr_pick = su username. Admin/operador: siempre True."""
+    """Pickers solo pueden abrir pedidos con usr_pick = su username. Otros roles (admin/operador/jefe): True."""
     if current_role != "picker":
         return True
     conn = get_conn(); cur = conn.cursor()
