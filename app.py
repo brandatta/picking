@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import mysql.connector
+import bcrypt
 
 # ================== CONFIG ==================
 st.set_page_config(page_title="Picking - Pedidos (SAP)", layout="wide")
@@ -72,6 +73,13 @@ h1, h2, h3 {
   padding: 12px; border-radius: 10px; margin-top: 16px;
   z-index: 1;
 }
+
+/* Caja de login centrada */
+.login-card {
+  max-width: 420px; margin: 8vh auto; padding: 24px;
+  border: 1px solid #eee; border-radius: 12px; background: #fff;
+  box-shadow: 0 2px 14px rgba(0,0,0,0.04);
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -84,6 +92,56 @@ def get_conn():
         database=st.secrets["app_marco_new"]["database"],
         port=st.secrets["app_marco_new"].get("port", 3306),
     )
+
+# ================== AUTH ==================
+def validar_usuario(username: str, password: str):
+    """
+    Devuelve el dict del usuario si las credenciales son válidas, sino None.
+    Tabla esperada: usuarios(username UNIQUE, password_hash, nombre, rol, ...)
+    """
+    if not username or not password:
+        return None
+    conn = get_conn()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT id, username, password_hash, nombre, rol FROM usuarios WHERE username = %s", (username,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    if user and bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
+        return user
+    return None
+
+def require_login():
+    if "user" not in st.session_state:
+        st.session_state.user = None
+    if "page" not in st.session_state:
+        st.session_state.page = "list"
+    if "selected_pedido" not in st.session_state:
+        st.session_state.selected_pedido = None
+
+    if st.session_state.user is None:
+        # Pantalla de login
+        st.markdown('<div class="login-card">', unsafe_allow_html=True)
+        st.header("Iniciar sesión")
+        username = st.text_input("Usuario")
+        password = st.text_input("Contraseña", type="password")
+        col_l, col_r = st.columns([1,1])
+        with col_l:
+            login_clicked = st.button("Ingresar", type="primary", use_container_width=True)
+        with col_r:
+            st.write("")  # espacio
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        if login_clicked:
+            user = validar_usuario(username, password)
+            if user:
+                st.session_state.user = user
+                st.success(f"Bienvenido {user.get('nombre') or user['username']} ({user.get('rol','')})")
+                st.rerun()
+            else:
+                st.error("Usuario o contraseña incorrectos")
+        return False
+    return True
 
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=30)
@@ -99,9 +157,10 @@ def get_orders(buscar: str | None = None) -> pd.DataFrame:
     conn.close()
 
     # CLIENTE sin .0 si es entero
-    df["CLIENTE"] = df["CLIENTE"].apply(
-        lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
-    )
+    if "CLIENTE" in df.columns:
+        df["CLIENTE"] = df["CLIENTE"].apply(
+            lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
+        )
     return df
 
 def get_order_items(numero: int) -> pd.DataFrame:
@@ -121,9 +180,10 @@ def get_order_items(numero: int) -> pd.DataFrame:
     df["PICKING"] = (
         df["PICKING"].fillna("N").astype(str).str.strip().str.upper().replace({"": "N"})
     )
-    df["CLIENTE"] = df["CLIENTE"].apply(
-        lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
-    )
+    if "CLIENTE" in df.columns:
+        df["CLIENTE"] = df["CLIENTE"].apply(
+            lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
+        )
     df["CANTIDAD"] = pd.to_numeric(df["CANTIDAD"], errors="coerce").fillna(0)
     df["CANTIDAD"] = df["CANTIDAD"].apply(lambda x: int(x) if float(x).is_integer() else x)
     return df
@@ -141,24 +201,36 @@ def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
     cur.close()
     conn.close()
 
-# ================== STATE ==================
-if "page" not in st.session_state:
-    st.session_state.page = "list"
-if "selected_pedido" not in st.session_state:
-    st.session_state.selected_pedido = None
-
+# ================== STATE HELPERS ==================
 def go(page: str):
     st.session_state.page = page
 
+# ================== LAYOUT: TOP BAR (usuario) ==================
+def render_topbar():
+    u = st.session_state.user
+    if not u:
+        return
+    c1, csp, c2 = st.columns([3,6,1])
+    with c1:
+        st.title("Pedidos (SAP)")
+    with c2:
+        if st.button("Cerrar sesión", use_container_width=True):
+            st.session_state.user = None
+            # Opcional: limpiar otros estados
+            for k in list(st.session_state.keys()):
+                if k.startswith("pick_") or k.startswith("btn_pick_"):
+                    del st.session_state[k]
+            st.rerun()
+
 # ================== PÁGINA: LISTA ==================
 def page_list():
-    st.title("📦 Pedidos (SAP)")
+    st.subheader("Listado de pedidos")
     c1, _ = st.columns([2,1])
     with c1:
         buscar = st.text_input("Buscar por cliente o número de pedido", placeholder="Ej: DIA o 100023120")
     orders_df = get_orders(buscar=buscar)
 
-    st.subheader("Resultados")
+    st.markdown("**Resultados**")
     if orders_df.empty:
         st.info("No hay pedidos para mostrar.")
         return
@@ -199,10 +271,10 @@ def page_detail():
 
     left, right = st.columns([3,1])
     with left:
-        st.title(f"🧾 Detalle Pedido #{numero}")
+        st.title(f"Detalle Pedido #{numero}")
     with right:
         st.write("")
-        if st.button("⬅ Volver a pedidos", use_container_width=True):
+        if st.button("Volver a pedidos", use_container_width=True):
             go("list")
             return
 
@@ -242,7 +314,6 @@ def page_detail():
             unsafe_allow_html=True
         )
     with c_right:
-        # Sin título para la columna de botones (espaciador)
         st.markdown("&nbsp;", unsafe_allow_html=True)
 
     # Filas (izquierda: SKU|Cantidad; derecha: botón)
@@ -288,8 +359,10 @@ def page_detail():
                 st.error(f"Error al actualizar: {e}")
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ================== ROUTER ==================
-if st.session_state.page == "list":
-    page_list()
-elif st.session_state.page == "detail":
-    page_detail()
+# ================== APP ==================
+if require_login():
+    render_topbar()
+    if st.session_state.page == "list":
+        page_list()
+    elif st.session_state.page == "detail":
+        page_detail()
