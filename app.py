@@ -46,6 +46,7 @@ div.stButton > button {
   line-height: 1.1 !important;
   white-space: nowrap;
   border-radius: 8px;
+  font-size: 0.95rem;
 }
 
 /* Botones Streamlit: colores según "type" */
@@ -80,6 +81,19 @@ div.stButton > button {
 .login-card { max-width: 420px; margin: 8vh auto; padding: 24px;
   border: 1px solid #eee; border-radius: 12px; background: #fff;
   box-shadow: 0 2px 14px rgba(0,0,0,0.04); }
+
+/* === Fix específico para el TOPBAR (evitar textos cortados) === */
+#topbar .stButton > button {
+  white-space: normal !important;   /* permitir envolver */
+  min-height: 40px;
+  padding: 10px 12px !important;
+  line-height: 1.2 !important;
+  font-size: 0.95rem;
+}
+#topbar { margin-bottom: .25rem; }
+@media (max-width: 900px) {
+  #topbar .stButton > button { font-size: 0.9rem; }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -554,7 +568,12 @@ def render_topbar():
     u = st.session_state.user
     if not u:
         return
-    c1, csp, c2 = st.columns([3,6,1])
+
+    # Contenedor para aplicar CSS específico del topbar
+    st.markdown('<div id="topbar">', unsafe_allow_html=True)
+
+    # Ensancho la columna del botón "Cerrar sesión" para que no se corte
+    c1, csp, c2 = st.columns([3,5,2])
     with c1:
         st.title("Pedidos (SAP)")
     with csp:
@@ -569,7 +588,11 @@ def render_topbar():
             for k in list(st.session_state.keys()):
                 if k.startswith("pick_") or k.startswith("btn_pick_"):
                     del st.session_state[k]
+                if k in ("team_selected_user", "selected_pedido"):
+                    del st.session_state[k]
             st.rerun()
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ================== PÁGINA: LISTA ==================
 def page_list():
@@ -667,7 +690,7 @@ def page_team_user_orders():
 
     st.subheader(f"Pedidos de: {sel}")
 
-    # Muestra progreso del usuario arriba (usando el mismo agregado que en el dashboard)
+    # Muestra progreso del usuario arriba
     dfp = get_user_progress()
     r = dfp[dfp["usuario"].astype(str).str.lower() == sel.lower()]
     if not r.empty:
