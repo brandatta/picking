@@ -25,7 +25,7 @@ h1, h2, h3 {
 .card {
   border: 1px solid #e9e9e9; border-radius: 12px; padding: 12px 14px;
   box-shadow: 0 2px 10px rgba(0,0,0,0.04); background: #fff; height: 100%;
-  overflow: visible; /* <-- FIX: que nada se esconda dentro de la tarjeta */
+  overflow: visible;
 }
 .card h4 { margin: 0 0 6px 0; font-size: 1rem; }
 .card small { color: #666; }
@@ -84,7 +84,7 @@ div.stButton > button {
 
 /* === Fix específico para el TOPBAR (evitar textos cortados) === */
 #topbar .stButton > button {
-  white-space: normal !important;   /* permitir envolver */
+  white-space: normal !important;
   min-height: 40px;
   padding: 10px 12px !important;
   line-height: 1.2 !important;
@@ -139,7 +139,6 @@ def create_user(username: str, plain_password: str, nombre: str, rol: str):
     conn.commit(); cur.close(); conn.close()
 
 def list_users():
-    """Devuelve [(username, rol)] ordenados por username."""
     conn = get_conn(); cur = conn.cursor()
     cur.execute("SELECT username, rol FROM usuarios ORDER BY username")
     rows = cur.fetchall()
@@ -147,7 +146,6 @@ def list_users():
     return rows
 
 def set_password(username: str, new_password: str):
-    """Resetea la contraseña de un usuario (hash bcrypt)."""
     conn = get_conn(); cur = conn.cursor()
     hashed = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode()
     cur.execute("UPDATE usuarios SET password_hash=%s WHERE username=%s", (hashed, username))
@@ -172,7 +170,6 @@ def validar_usuario(username: str, password: str):
 
     if not user:
         return None
-
     stored = user.get("password_hash")
     if not stored or not isinstance(stored, str) or not stored.startswith("$2"):
         return None
@@ -183,7 +180,6 @@ def validar_usuario(username: str, password: str):
     return user if ok else None
 
 def render_setup_panel():
-    # Mostrar solo si hay SETUP_TOKEN y no hay usuarios
     if st.secrets.get("SETUP_TOKEN") is None:
         return
     try:
@@ -225,13 +221,6 @@ def render_setup_panel():
 # ================== ADMIN PANEL: asignación robusta ==================
 def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
                          chunk_size: int = 200, max_retries: int = 3) -> tuple[int, int]:
-    """
-    Asigna aleatoriamente un usuario de 'pickers' a cada NUMERO de pedido.
-    mode: "all" -> reasigna todos los pedidos
-          "missing" -> solo pedidos con usr_pick NULL o TRIM(usr_pick)=''
-    Actualiza por pedido (uno a uno), con autocommit y reintentos ante 1205/1213.
-    Devuelve: (pedidos_afectados, filas_actualizadas_acumuladas)
-    """
     if not pickers:
         raise ValueError("La lista de pickers está vacía.")
 
@@ -299,7 +288,6 @@ def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
 
 # ================== ADMIN USERS PANEL ==================
 def render_user_admin_panel():
-    """Panel UI de administración de usuarios (solo admin)."""
     u = st.session_state.get("user")
     if not u or u.get("rol") != "admin":
         return
@@ -307,7 +295,6 @@ def render_user_admin_panel():
     with st.expander("⚙️ Administración – Usuarios"):
         tabs = st.tabs(["➕ Crear usuario", "🔁 Resetear contraseña", "🔀 Asignar pedidos a pickers"])
 
-        # --- Crear usuario ---
         with tabs[0]:
             c1, c2 = st.columns(2)
             with c1:
@@ -341,7 +328,6 @@ def render_user_admin_panel():
                     except Exception as e:
                         st.error(f"No se pudo crear el usuario: {e}")
 
-        # --- Resetear contraseña ---
         with tabs[1]:
             users = list_users()
             if not users:
@@ -366,23 +352,19 @@ def render_user_admin_panel():
                         except Exception as e:
                             st.error(f"No se pudo actualizar la contraseña: {e}")
 
-        # --- Asignar aleatoriamente pedidos ---
         with tabs[2]:
             st.subheader("Asignación aleatoria de pedidos (usr_pick)")
             txt = st.text_input("Usuarios (separados por coma)", value="usr1, usr2, usr3, usr4")
             pickers = [p.strip() for p in txt.split(",") if p.strip()]
-
             modo = st.radio(
                 "¿Qué pedidos querés afectar?",
                 ["Todos los pedidos (reasignar)", "Solo los que no tienen usr_pick"],
                 index=0
             )
             mode_key = "all" if modo.startswith("Todos") else "missing"
-
             col_a, col_b = st.columns([1,2])
             with col_a:
                 btn_assign = st.button("Asignar ahora", type="primary", use_container_width=True)
-
             if btn_assign:
                 if not pickers:
                     st.error("Ingresá al menos un usuario.")
@@ -406,7 +388,6 @@ def require_login():
         st.session_state.team_selected_user = None
 
     if st.session_state.user is None:
-        # Ocultar header/toolbar y reducir padding SOLO en login
         st.markdown("""
         <style>
         header[data-testid="stHeader"] { display: none; }
@@ -416,7 +397,6 @@ def require_login():
         </style>
         """, unsafe_allow_html=True)
 
-        # Pantalla de login
         st.markdown('<div class="login-card">', unsafe_allow_html=True)
         st.header("Iniciar sesión")
         username = st.text_input("Usuario").strip()
@@ -428,7 +408,6 @@ def require_login():
             st.write("")
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # Setup inicial (si aplica)
         try:
             if count_usuarios() == 0 and st.secrets.get("SETUP_TOKEN") is not None:
                 render_setup_panel()
@@ -458,23 +437,23 @@ def get_orders(buscar: str | None = None,
                current_username: str | None = None,
                current_role: str | None = None) -> pd.DataFrame:
     """
-    - Admin/operador/jefe: ven todos los pedidos (incluye usr_pick).
+    - Admin/operador/jefe: ven todos los pedidos (incluye usr_pick y rs).
     - Picker: solo ve pedidos donde sap.usr_pick = current_username.
     """
     params = []
     if current_role == "picker":
-        base = "SELECT DISTINCT NUMERO, CLIENTE FROM sap WHERE usr_pick = %s"
+        base = "SELECT DISTINCT NUMERO, CLIENTE, rs FROM sap WHERE usr_pick = %s"
         params.append(current_username)
         if buscar:
-            base += " AND (CAST(NUMERO AS CHAR) LIKE %s OR CLIENTE LIKE %s)"
-            params.extend([f"%{buscar}%", f"%{buscar}%"])
+            base += " AND (CAST(NUMERO AS CHAR) LIKE %s OR CLIENTE LIKE %s OR CAST(rs AS CHAR) LIKE %s)"
+            params.extend([f"%{buscar}%", f"%{buscar}%", f"%{buscar}%"])
         q = base + " ORDER BY NUMERO DESC LIMIT 150"
     else:
-        base = "SELECT DISTINCT NUMERO, CLIENTE, usr_pick FROM sap"
+        base = "SELECT DISTINCT NUMERO, CLIENTE, usr_pick, rs FROM sap"
         where = []
         if buscar:
-            where.append("(CAST(NUMERO AS CHAR) LIKE %s OR CLIENTE LIKE %s)")
-            params.extend([f"%{buscar}%", f"%{buscar}%"])
+            where.append("(CAST(NUMERO AS CHAR) LIKE %s OR CLIENTE LIKE %s OR CAST(rs AS CHAR) LIKE %s)")
+            params.extend([f"%{buscar}%", f"%{buscar}%", f"%{buscar}%"])
         q = base + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY NUMERO DESC LIMIT 150"
 
     conn = get_conn()
@@ -485,10 +464,12 @@ def get_orders(buscar: str | None = None,
         df["CLIENTE"] = df["CLIENTE"].apply(
             lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
         )
+    # Normalizar rs a string legible
+    if "rs" in df.columns:
+        df["rs"] = df["rs"].apply(lambda x: "" if x is None else str(x))
     return df
 
 def user_can_open_order(numero: int, current_username: str, current_role: str) -> bool:
-    """Pickers solo pueden abrir pedidos con usr_pick = su usuario. Otros roles (admin/operador/jefe): True."""
     if current_role != "picker":
         return True
     conn = get_conn(); cur = conn.cursor()
@@ -501,7 +482,7 @@ def get_order_items(numero: int) -> pd.DataFrame:
     conn = get_conn()
     df = pd.read_sql(
         """
-        SELECT NUMERO, CLIENTE, CODIGO, CANTIDAD, COALESCE(PICKING, 'N') AS PICKING
+        SELECT NUMERO, CLIENTE, CODIGO, ItemName, CANTIDAD, COALESCE(PICKING, 'N') AS PICKING
         FROM sap
         WHERE NUMERO = %s
         ORDER BY CODIGO
@@ -515,6 +496,8 @@ def get_order_items(numero: int) -> pd.DataFrame:
         df["CLIENTE"] = df["CLIENTE"].apply(
             lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
         )
+    if "ItemName" in df.columns:
+        df["ItemName"] = df["ItemName"].apply(lambda x: "" if x is None else str(x))
     df["CANTIDAD"] = pd.to_numeric(df["CANTIDAD"], errors="coerce").fillna(0)
     df["CANTIDAD"] = df["CANTIDAD"].apply(lambda x: int(x) if float(x).is_integer() else x)
     return df
@@ -533,9 +516,6 @@ def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
 # ======= Progreso por usuario (usr_pick) =======
 @st.cache_data(ttl=15)
 def get_user_progress() -> pd.DataFrame:
-    """
-    Devuelve por usuario (usr_pick): pedidos, ítems, ítems pickeados, cantidades totales y pickeadas, y %.
-    """
     q = """
     SELECT
       usr_pick AS usuario,
@@ -569,15 +549,11 @@ def render_topbar():
     if not u:
         return
 
-    # Contenedor para aplicar CSS específico del topbar
     st.markdown('<div id="topbar">', unsafe_allow_html=True)
-
-    # Ensancho la columna del botón "Cerrar sesión" para que no se corte
     c1, csp, c2 = st.columns([3,5,2])
     with c1:
         st.title("Pedidos (SAP)")
     with csp:
-        # Navegación para admin/jefe
         if u.get("rol") in ("admin", "jefe"):
             n1, n2 = st.columns(2)
             n1.button("📦 Pedidos", on_click=go, args=("list",), use_container_width=True)
@@ -591,7 +567,6 @@ def render_topbar():
                 if k in ("team_selected_user", "selected_pedido"):
                     del st.session_state[k]
             st.rerun()
-
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ================== PÁGINA: LISTA ==================
@@ -602,7 +577,7 @@ def page_list():
     st.subheader("Listado de pedidos")
     c1, _ = st.columns([2,1])
     with c1:
-        buscar = st.text_input("Buscar por cliente o número de pedido", placeholder="Ej: DIA o 100023120")
+        buscar = st.text_input("Buscar por cliente, número o RS", placeholder="Ej: DIA, 100023120 o RS")
 
     orders_df = get_orders(buscar=buscar, current_username=uname, current_role=role)
 
@@ -621,6 +596,7 @@ def page_list():
             if idx >= total: break
             row = orders_df.iloc[idx]
             numero, cliente = row.NUMERO, row.CLIENTE
+            rs_val = str(row["rs"]) if "rs" in orders_df.columns else ""
 
             items = get_order_items(numero)
             total_items = len(items)
@@ -630,7 +606,13 @@ def page_list():
             with col:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
                 st.markdown(f"<h4>Pedido #{numero}</h4>", unsafe_allow_html=True)
-                st.markdown(f"<div><small>Cliente:</small> <b>{cliente}</b></div>", unsafe_allow_html=True)
+                # Cliente + RS
+                st.markdown(
+                    f"<div><small>Cliente:</small> <b>{cliente}</b>"
+                    + (f" &nbsp;·&nbsp; <small>RS:</small> <b>{rs_val or '-'}</b>" if "rs" in orders_df.columns else "")
+                    + "</div>",
+                    unsafe_allow_html=True
+                )
                 st.progress(pct/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct}%)")
                 if st.button("Ver detalle", key=f"open_{numero}", use_container_width=True):
@@ -648,12 +630,10 @@ def render_team_dashboard():
         st.info("No hay pedidos asignados a usuarios (usr_pick está vacío).")
         return
 
-    # Filtro por usuario
     filtro = st.text_input("Filtrar usuario", "")
     if filtro:
         df = df[df["usuario"].astype(str).str.contains(filtro, case=False, na=False)]
 
-    # Tarjetas por usuario
     idx, total = 0, len(df)
     while idx < total:
         cols = st.columns([1,1,1])
@@ -688,14 +668,12 @@ def page_team_user_orders():
             go("team")
         return
 
-    # Encabezado con botón de volver (arriba a la derecha)
     h_left, h_right = st.columns([3,1])
     with h_left:
         st.subheader(f"Pedidos de: {sel}")
     with h_right:
         st.button("← Seleccionar otro usuario", on_click=go, args=("team",), use_container_width=True)
 
-    # Muestra progreso del usuario arriba
     dfp = get_user_progress()
     r = dfp[dfp["usuario"].astype(str).str.lower() == sel.lower()]
     if not r.empty:
@@ -706,10 +684,8 @@ def page_team_user_orders():
         pct = int((qty_picked/qty_total)*100) if qty_total > 0 else 0
         st.caption(f"Avance por cantidades: {int(qty_picked)}/{int(qty_total)} ({pct}%)")
 
-    # Buscador
-    buscar = st.text_input("Buscar por cliente o número de pedido (solo de este usuario)")
+    buscar = st.text_input("Buscar por cliente, número o RS (solo de este usuario)")
 
-    # Trae pedidos del usuario como si fuera un picker
     odf = get_orders(buscar=buscar, current_username=sel, current_role="picker")
     if odf.empty:
         st.info("No hay pedidos para este usuario.")
@@ -720,7 +696,6 @@ def page_team_user_orders():
             st.button("Ir a Pedidos", on_click=go, args=("list",), use_container_width=True)
         return
 
-    # Tarjetas de pedidos
     i2, t2 = 0, len(odf)
     while i2 < t2:
         cols2 = st.columns([1,1,1])
@@ -728,6 +703,8 @@ def page_team_user_orders():
             if i2 >= t2: break
             row = odf.iloc[i2]
             numero, cliente = row.NUMERO, row.CLIENTE
+            rs_val = str(row["rs"]) if "rs" in odf.columns else ""
+
             items_df = get_order_items(numero)
             total_items = len(items_df)
             picked = (items_df["PICKING"] == "Y").sum() if total_items > 0 else 0
@@ -736,7 +713,12 @@ def page_team_user_orders():
             with c:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
                 st.markdown(f"<h4>Pedido #{numero}</h4>", unsafe_allow_html=True)
-                st.markdown(f"<div><small>Cliente:</small> <b>{cliente}</b></div>", unsafe_allow_html=True)
+                st.markdown(
+                    f"<div><small>Cliente:</small> <b>{cliente}</b>"
+                    + (f" &nbsp;·&nbsp; <small>RS:</small> <b>{rs_val or '-'}</b>" if "rs" in odf.columns else "")
+                    + "</div>",
+                    unsafe_allow_html=True
+                )
                 st.progress(pct_card/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct_card}%)")
                 if st.button("Ver detalle", key=f"open_user_{sel}_{numero}", use_container_width=True):
@@ -745,7 +727,6 @@ def page_team_user_orders():
                 st.markdown("</div>", unsafe_allow_html=True)
             i2 += 1
 
-    # Navegación inferior (opcional, lo dejé)
     c1, c2 = st.columns([1,1])
     with c1:
         st.button("← Volver al equipo", on_click=go, args=("team",), use_container_width=True)
@@ -764,7 +745,6 @@ def page_detail():
             go("list")
         return
 
-    # Seguridad: si es picker, solo puede abrir si usr_pick = su usuario
     if not user_can_open_order(numero, uname, role):
         st.error("No tenés acceso a este pedido (usr_pick no coincide con tu usuario).")
         if st.button("Volver a pedidos", use_container_width=True):
@@ -785,13 +765,11 @@ def page_detail():
         st.info("Este pedido no tiene ítems.")
         return
 
-    # Estado inicial por SKU
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         if key not in st.session_state:
             st.session_state[key] = (r["PICKING"] == "Y")
 
-    # Barra de avance por CANTIDADES
     total_qty = pd.to_numeric(items_df["CANTIDAD"], errors="coerce").fillna(0).sum()
     picked_qty = sum(
         float(r["CANTIDAD"]) for _, r in items_df.iterrows()
@@ -804,21 +782,19 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-    # Cliente
     cliente = str(items_df["CLIENTE"].iloc[0])
     st.markdown(f"**Cliente:** {cliente}")
 
-    # Encabezado alineado
     c_left, c_right = st.columns([7,3])
     with c_left:
-        st.markdown('<div class="header-line"><span>SKU</span><span class="qty">Cantidad</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="header-line"><span>SKU / Descripción</span><span class="qty">Cantidad</span></div>', unsafe_allow_html=True)
     with c_right:
         st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    # Filas de picking
     for _, r in items_df.iterrows():
         key = f"pick_{numero}_{r['CODIGO']}"
         active = st.session_state[key]
+        item_name = r.get("ItemName") or ""
         c_left, c_right = st.columns([7,3])
         with c_left:
             sku_txt = str(r["CODIGO"])
@@ -827,7 +803,7 @@ def page_detail():
             st.markdown(f'''
                 <div class="detail-row">
                   <div class="line">
-                    <span class="sku">{sku_txt}</span>
+                    <span class="sku">{sku_txt} – {item_name}</span>
                     <span class="qty">{cant_txt}</span>
                   </div>
                 </div>''', unsafe_allow_html=True)
@@ -837,7 +813,6 @@ def page_detail():
                 st.session_state[key] = not active
                 st.rerun()
 
-    # Confirmar
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
     ccf, _, _ = st.columns([1,1,2])
     with ccf:
@@ -860,7 +835,6 @@ def page_detail():
 if require_login():
     render_topbar()
 
-    # Panel de administración de usuarios (solo admin)
     if st.session_state.get("user", {}).get("rol") == "admin":
         render_user_admin_panel()
 
