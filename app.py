@@ -745,6 +745,7 @@ def page_detail():
             go("list")
         return
 
+    # Seguridad: si es picker, solo puede abrir si usr_pick = su usuario
     if not user_can_open_order(numero, uname, role):
         st.error("No tenés acceso a este pedido (usr_pick no coincide con tu usuario).")
         if st.button("Volver a pedidos", use_container_width=True):
@@ -765,11 +766,13 @@ def page_detail():
         st.info("Este pedido no tiene ítems.")
         return
 
+    # Estado inicial por SKU (una sola clave lógica por CODIGO)
     for _, r in items_df.iterrows():
-        key = f"pick_{numero}_{r['CODIGO']}"
-        if key not in st.session_state:
-            st.session_state[key] = (r["PICKING"] == "Y")
+        logical_key = f"pick_{numero}_{r['CODIGO']}"
+        if logical_key not in st.session_state:
+            st.session_state[logical_key] = (str(r["PICKING"]).upper() == "Y")
 
+    # Barra de avance por CANTIDADES
     total_qty = pd.to_numeric(items_df["CANTIDAD"], errors="coerce").fillna(0).sum()
     picked_qty = sum(
         float(r["CANTIDAD"]) for _, r in items_df.iterrows()
@@ -782,18 +785,23 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
+    # Cliente
     cliente = str(items_df["CLIENTE"].iloc[0])
     st.markdown(f"**Cliente:** {cliente}")
 
+    # Encabezado alineado
     c_left, c_right = st.columns([7,3])
     with c_left:
         st.markdown('<div class="header-line"><span>SKU / Descripción</span><span class="qty">Cantidad</span></div>', unsafe_allow_html=True)
     with c_right:
         st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    for _, r in items_df.iterrows():
-        key = f"pick_{numero}_{r['CODIGO']}"
-        active = st.session_state[key]
+    # Filas de picking (keys de botón únicas por fila usando el índice)
+    for i, r in items_df.iterrows():
+        logical_key = f"pick_{numero}_{r['CODIGO']}"       # estado por SKU
+        widget_key  = f"btn_{numero}_{r['CODIGO']}_{i}"    # key única del botón
+        active = st.session_state[logical_key]
+
         item_name = r.get("ItemName") or ""
         c_left, c_right = st.columns([7,3])
         with c_left:
@@ -809,19 +817,22 @@ def page_detail():
                 </div>''', unsafe_allow_html=True)
         with c_right:
             btn_type = "primary" if active else "secondary"
-            if st.button("Picking", key=f"btn_{key}", type=btn_type, use_container_width=True):
-                st.session_state[key] = not active
+            if st.button("Picking", key=widget_key, type=btn_type, use_container_width=True):
+                # alternamos el estado lógico por SKU (afecta todas las filas con el mismo CODIGO)
+                st.session_state[logical_key] = not active
                 st.rerun()
 
+    # Confirmar
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
     ccf, _, _ = st.columns([1,1,2])
     with ccf:
         if st.button("Confirmar cambios", key="confirm", use_container_width=True, type="primary"):
             try:
                 updates = []
-                for _, r in items_df.iterrows():
+                # Nota: como el estado es por CODIGO, actualizamos por CODIGO (todas las filas de ese SKU)
+                for _, r in items_df.drop_duplicates(subset=["CODIGO"]).iterrows():
                     logical_key = f"pick_{numero}_{r['CODIGO']}"
-                    flag = "Y" if st.session_state[logical_key] else "N"
+                    flag = "Y" if st.session_state.get(logical_key, False) else "N"
                     updates.append((str(r["CODIGO"]), flag))
                 update_picking_bulk(numero, updates)
                 st.success("Picking actualizado correctamente.")
