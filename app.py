@@ -6,7 +6,7 @@ import random   # asignación aleatoria
 import time     # backoff en reintentos
 
 # ================== CONFIG ==================
-st.set_page_config(page_title="Picking - VicborDraft", layout="wide")
+st.set_page_config(page_title="Picking - Pedidos (SAP)", layout="wide")
 
 # ================== ESTILOS ==================
 st.markdown("""
@@ -552,7 +552,7 @@ def render_topbar():
     st.markdown('<div id="topbar">', unsafe_allow_html=True)
     c1, csp, c2 = st.columns([3,5,2])
     with c1:
-        st.title("Pedidos (SAP)")
+        st.title("VicborDraft")
     with csp:
         if u.get("rol") in ("admin", "jefe"):
             n1, n2 = st.columns(2)
