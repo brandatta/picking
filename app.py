@@ -6,7 +6,7 @@ import random   # asignación aleatoria
 import time     # backoff en reintentos
 
 # ================== CONFIG ==================
-st.set_page_config(page_title="Picking - Pedidos (SAP)", layout="wide")
+st.set_page_config(page_title="VicborDraft", layout="wide")
 
 # ================== ESTILOS ==================
 st.markdown("""
