@@ -826,7 +826,7 @@ def page_detail():
     st.markdown('<div class="confirm-bar">', unsafe_allow_html=True)
     ccf, _, _ = st.columns([1,1,2])
     with ccf:
-        if st.button("Confirmar cambios", key="confirm", use_container_width=True, type="primary"):
+        if st.button("Confirmar Picking", key="confirm", use_container_width=True, type="primary"):
             try:
                 updates = []
                 # Nota: como el estado es por CODIGO, actualizamos por CODIGO (todas las filas de ese SKU)
