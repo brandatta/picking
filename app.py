@@ -761,32 +761,30 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-# === ETA por ritmo real (sin unid/min) + botón de actualización ===
-# Botón para recalcular ahora (fuerza un rerun inmediato)
-col_eta_btn, _ = st.columns([1,3])
-with col_eta_btn:
-    if st.button("Actualizar tiempo estimado", key=f"refresh_eta_{numero}", use_container_width=True):
-        # guardo un timestamp solo para tener un cambio de estado y forzar el rerun
-        st.session_state[f"eta_refresh_{numero}"] = time.time()
-        st.rerun()
+    # Botón para recalcular ETA inmediatamente
+    col_eta_btn, _ = st.columns([1, 3])
+    with col_eta_btn:
+        if st.button("Actualizar tiempo estimado", key=f"refresh_eta_{numero}", use_container_width=True):
+            st.rerun()
 
-order_ts = get_order_ts(numero)   # datetime o None
-if order_ts and picked_qty > 0:
-    elapsed_min = max((datetime.now() - order_ts).total_seconds() / 60.0, 0.01)
-    remaining_qty = max(total_qty - picked_qty, 0.0)
-    eta_minutes = elapsed_min * (remaining_qty / picked_qty) if picked_qty > 0 else 0.0
-
-    eta_text = fmt_duration(eta_minutes)
-    eta_clock = (datetime.now() + timedelta(minutes=eta_minutes)).strftime("%H:%M")
-
-    st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock})")
-    st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
-else:
-    st.caption("Tiempo estimado restante: — (se mostrará cuando inicie el picking)")
-    if order_ts:
+    # ETA por ritmo real (sin unid/min)
+    order_ts = get_order_ts(numero)   # datetime o None
+    if order_ts and picked_qty > 0:
+        elapsed_min = max((datetime.now() - order_ts).total_seconds() / 60.0, 0.01)
+        # ETA = tiempo transcurrido * (pendiente / hecho)
+        remaining_qty = max(total_qty - picked_qty, 0.0)
+        eta_minutes = elapsed_min * (remaining_qty / picked_qty) if picked_qty > 0 else 0.0
+        eta_text = fmt_duration(eta_minutes)
+        eta_clock = (datetime.now() + timedelta(minutes=eta_minutes)).strftime("%H:%M")
+        st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock})")
         st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
-        st.caption("Inicio de picking: —")
+        # Sin TS o sin progreso marcado aún
+        st.caption("Tiempo estimado restante: — (se mostrará cuando inicie el picking)")
+        if order_ts:
+            st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
+        else:
+            st.caption("Inicio de picking: —")
 
     # Cliente
     cliente = str(items_df["CLIENTE"].iloc[0])
