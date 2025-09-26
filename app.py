@@ -4,6 +4,7 @@ import mysql.connector
 import bcrypt
 import random   # asignación aleatoria
 import time     # backoff en reintentos
+from datetime import datetime, timedelta
 
 # ================== CONFIG ==================
 st.set_page_config(page_title="VicborDraft", layout="wide")
@@ -539,6 +540,42 @@ def get_user_progress() -> pd.DataFrame:
     df["pct_qty"] = df.apply(lambda r: int((r["qty_picked"] / r["qty_total"]) * 100) if r["qty_total"] > 0 else 0, axis=1)
     return df
 
+# ======= TS helpers (inicio de picking) =======
+def get_order_ts(numero: int):
+    """Devuelve el MIN(TS) del pedido (o None si no hay TS)."""
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("SELECT MIN(TS) FROM sap WHERE NUMERO = %s", (numero,))
+    ts = cur.fetchone()[0]
+    cur.close(); conn.close()
+    return ts  # datetime | None
+
+def ensure_ts_if_started(numero: int):
+    """
+    Si el pedido tiene al menos un ítem en Y y TS está vacío,
+    setea TS = NOW() solo en filas con TS NULL para ese NUMERO.
+    """
+    conn = get_conn(); cur = conn.cursor()
+    cur.execute("""
+        SELECT SUM(CASE WHEN UPPER(COALESCE(PICKING,'N'))='Y' THEN 1 ELSE 0 END)
+        FROM sap WHERE NUMERO = %s
+    """, (numero,))
+    cnt_y = cur.fetchone()[0] or 0
+
+    if cnt_y > 0:
+        cur.execute("SELECT MIN(TS) FROM sap WHERE NUMERO = %s", (numero,))
+        has_ts = cur.fetchone()[0]
+        if not has_ts:
+            cur.execute("UPDATE sap SET TS = NOW() WHERE NUMERO = %s AND TS IS NULL", (numero,))
+            conn.commit()
+    cur.close(); conn.close()
+
+def fmt_duration(minutes: float) -> str:
+    if minutes <= 0:
+        return "0 min"
+    m = int(round(minutes))
+    h, m = divmod(m, 60)
+    return f"{h} h {m} min" if h else f"{m} min"
+
 # ================== STATE HELPERS ==================
 def go(page: str):
     st.session_state.page = page
@@ -772,7 +809,7 @@ def page_detail():
         if logical_key not in st.session_state:
             st.session_state[logical_key] = (str(r["PICKING"]).upper() == "Y")
 
-    # Barra de avance por CANTIDADES
+    # Barra de avance por CANTIDADES + ETA + TS
     total_qty = pd.to_numeric(items_df["CANTIDAD"], errors="coerce").fillna(0).sum()
     picked_qty = sum(
         float(r["CANTIDAD"]) for _, r in items_df.iterrows()
@@ -784,6 +821,31 @@ def page_detail():
     picked_str = str(int(picked_qty)) if float(picked_qty).is_integer() else str(picked_qty)
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
+
+    # ETA por cantidades
+    remaining_qty = max(total_qty - picked_qty, 0)
+    default_rate = float(st.secrets.get("PICK_RATE_UPM", 40))
+    rate = st.number_input(
+        "Velocidad (unid/min)",
+        min_value=1.0, max_value=1000.0,
+        value=default_rate, step=1.0,
+        key=f"rate_{numero}",
+        help="Rendimiento estimado para calcular el tiempo restante."
+    )
+    eta_minutes = (remaining_qty / rate) if rate > 0 else 0.0
+    eta_text = fmt_duration(eta_minutes)
+    eta_clock = (datetime.now() + timedelta(minutes=eta_minutes)).strftime("%H:%M")
+    st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock}) — faltan {int(remaining_qty)} unidades.")
+
+    # TS (inicio de picking)
+    order_ts = get_order_ts(numero)
+    if order_ts:
+        st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
+    else:
+        if picked_qty > 0:
+            st.caption("Inicio de picking: se registrará al confirmar (ahora).")
+        else:
+            st.caption("Inicio de picking: —")
 
     # Cliente
     cliente = str(items_df["CLIENTE"].iloc[0])
@@ -829,12 +891,17 @@ def page_detail():
         if st.button("Confirmar Picking", key="confirm", use_container_width=True, type="primary"):
             try:
                 updates = []
-                # Nota: como el estado es por CODIGO, actualizamos por CODIGO (todas las filas de ese SKU)
+                # Como el estado es por CODIGO, actualizamos por CODIGO (todas las filas de ese SKU)
                 for _, r in items_df.drop_duplicates(subset=["CODIGO"]).iterrows():
                     logical_key = f"pick_{numero}_{r['CODIGO']}"
                     flag = "Y" if st.session_state.get(logical_key, False) else "N"
                     updates.append((str(r["CODIGO"]), flag))
+
                 update_picking_bulk(numero, updates)
+
+                # Si hay algún Y y aún no hay TS, persistimos NOW() en sap.TS
+                ensure_ts_if_started(numero)
+
                 st.success("Picking actualizado correctamente.")
                 st.cache_data.clear()
                 go("list"); st.rerun()
