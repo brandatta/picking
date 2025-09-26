@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import mysql.connector
 import bcrypt
-import random   # asignación aleatoria
-import time     # backoff en reintentos
+import random
+import time
 from datetime import datetime, timedelta
 
 # ================== CONFIG ==================
@@ -13,14 +13,7 @@ st.set_page_config(page_title="VicborDraft", layout="wide")
 st.markdown("""
 <style>
 .block-container { padding-top: 2.5rem !important; }
-
-/* Evitar que se corte el título */
-h1, h2, h3 {
-  margin-top: 0.2rem !important;
-  margin-bottom: 0.8rem !important;
-  line-height: 1.2 !important;
-  white-space: normal !important;
-}
+h1, h2, h3 { margin-top: 0.2rem !important; margin-bottom: 0.8rem !important; line-height: 1.2 !important; white-space: normal !important; }
 
 /* Tarjetas */
 .card {
@@ -34,33 +27,18 @@ h1, h2, h3 {
 /* Columnas sin recortes */
 div[data-testid="column"] { overflow: visible !important; }
 
-/* Contenedor del botón y botón a ancho completo + robusto */
+/* Botones */
 div.stButton { width: 100%; display: block; }
 div.stButton > button {
-  width: 100% !important;
-  box-sizing: border-box !important;
-  min-height: 40px;
-  padding: 10px 14px !important;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1.1 !important;
-  white-space: nowrap;
-  border-radius: 8px;
-  font-size: 0.95rem;
+  width: 100% !important; box-sizing: border-box !important;
+  min-height: 40px; padding: 10px 14px !important;
+  display: inline-flex; align-items: center; justify-content: center;
+  line-height: 1.1 !important; white-space: nowrap; border-radius: 8px; font-size: 0.95rem;
 }
-
-/* Botones Streamlit: colores según "type" */
-.stButton>button[kind="primary"] {
-  background-color: #28a745 !important; color: #fff !important; border: 1px solid #28a745 !important;
-}
-.stButton>button[kind="primary"]:hover { background-color: #218838 !important; border-color: #218838 !important; }
-.stButton>button[kind="secondary"] {
-  background-color: #ffffff !important; color: #333 !important; border: 1px solid #d9d9d9 !important;
-}
-.stButton>button[kind="secondary"]:hover {
-  background-color: #f5f5f5 !important; color: #000 !important; border-color: #cfcfcf !important;
-}
+.stButton>button[kind="primary"]   { background-color: #28a745 !important; color: #fff !important; border: 1px solid #28a745 !important; }
+.stButton>button[kind="primary"]:hover   { background-color: #218838 !important; border-color: #218838 !important; }
+.stButton>button[kind="secondary"] { background-color: #ffffff !important; color: #333 !important; border: 1px solid #d9d9d9 !important; }
+.stButton>button[kind="secondary"]:hover { background-color: #f5f5f5 !important; color: #000 !important; border-color: #cfcfcf !important; }
 
 /* Filas */
 .detail-row { border-bottom: 1px dashed #ececec; padding: 8px 0; }
@@ -78,23 +56,15 @@ div.stButton > button {
 .confirm-bar { position: sticky; bottom: 0; background: #fafafa; border-top: 1px solid #eee;
   padding: 12px; border-radius: 10px; margin-top: 16px; z-index: 1; }
 
-/* Caja de login centrada */
+/* Login */
 .login-card { max-width: 420px; margin: 8vh auto; padding: 24px;
   border: 1px solid #eee; border-radius: 12px; background: #fff;
   box-shadow: 0 2px 14px rgba(0,0,0,0.04); }
 
-/* === Fix específico para el TOPBAR (evitar textos cortados) === */
-#topbar .stButton > button {
-  white-space: normal !important;
-  min-height: 40px;
-  padding: 10px 12px !important;
-  line-height: 1.2 !important;
-  font-size: 0.95rem;
-}
+/* Topbar */
+#topbar .stButton > button { white-space: normal !important; min-height: 40px; padding: 10px 12px !important; line-height: 1.2 !important; font-size: 0.95rem; }
 #topbar { margin-bottom: .25rem; }
-@media (max-width: 900px) {
-  #topbar .stButton > button { font-size: 0.9rem; }
-}
+@media (max-width: 900px) { #topbar .stButton > button { font-size: 0.9rem; } }
 </style>
 """, unsafe_allow_html=True)
 
@@ -190,7 +160,7 @@ def render_setup_panel():
     except:
         pass
 
-    with st.expander("🛠️ Setup rápido (solo una vez)"):
+    with st.expander("Setup rápido (solo una vez)"):
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Crear tabla 'usuarios'", use_container_width=True):
@@ -229,14 +199,10 @@ def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
     conn.autocommit = True
     cur = conn.cursor()
 
-    try:
-        cur.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
-    except Exception:
-        pass
-    try:
-        cur.execute("SET SESSION innodb_lock_wait_timeout = 5")
-    except Exception:
-        pass
+    try: cur.execute("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED")
+    except Exception: pass
+    try: cur.execute("SET SESSION innodb_lock_wait_timeout = 5")
+    except Exception: pass
 
     if mode == "missing":
         cur.execute("SELECT DISTINCT NUMERO FROM sap WHERE usr_pick IS NULL OR TRIM(usr_pick) = ''")
@@ -249,7 +215,6 @@ def bulk_assign_usr_pick(pickers: list[str], mode: str = "all",
         return (0, 0)
 
     random.shuffle(numeros)
-
     pedidos_afectados = 0
     filas_actualizadas = 0
 
@@ -293,8 +258,8 @@ def render_user_admin_panel():
     if not u or u.get("rol") != "admin":
         return
 
-    with st.expander("⚙️ Administración – Usuarios"):
-        tabs = st.tabs(["➕ Crear usuario", "🔁 Resetear contraseña", "🔀 Asignar pedidos a pickers"])
+    with st.expander("Administración – Usuarios"):
+        tabs = st.tabs(["Crear usuario", "Resetear contraseña", "Asignar pedidos a pickers"])
 
         with tabs[0]:
             c1, c2 = st.columns(2)
@@ -305,10 +270,8 @@ def render_user_admin_panel():
             with c2:
                 p1 = st.text_input("Contraseña", type="password")
                 p2 = st.text_input("Repetir contraseña", type="password")
-                st.caption("Sugerido: mínimo 6 caracteres, combiná letras y números.")
-
-            btn = st.button("Crear usuario", type="primary", use_container_width=True)
-            if btn:
+                st.caption("Sugerido: mínimo 6 caracteres.")
+            if st.button("Crear usuario", type="primary", use_container_width=True):
                 if not new_username or not p1 or not p2:
                     st.error("Completá usuario y contraseñas.")
                 elif p1 != p2:
@@ -338,8 +301,7 @@ def render_user_admin_panel():
                 sel_user = st.selectbox("Usuario", options=usernames)
                 np1 = st.text_input("Nueva contraseña", type="password", key="np1")
                 np2 = st.text_input("Repetir nueva contraseña", type="password", key="np2")
-                btn_reset = st.button("Resetear contraseña", type="secondary", use_container_width=True)
-                if btn_reset:
+                if st.button("Resetear contraseña", type="secondary", use_container_width=True):
                     if not np1 or not np2:
                         st.error("Completá ambas contraseñas.")
                     elif np1 != np2:
@@ -357,22 +319,16 @@ def render_user_admin_panel():
             st.subheader("Asignación aleatoria de pedidos (usr_pick)")
             txt = st.text_input("Usuarios (separados por coma)", value="usr1, usr2, usr3, usr4")
             pickers = [p.strip() for p in txt.split(",") if p.strip()]
-            modo = st.radio(
-                "¿Qué pedidos querés afectar?",
-                ["Todos los pedidos (reasignar)", "Solo los que no tienen usr_pick"],
-                index=0
-            )
+            modo = st.radio("¿Qué pedidos querés afectar?",
+                            ["Todos los pedidos (reasignar)", "Solo los que no tienen usr_pick"], index=0)
             mode_key = "all" if modo.startswith("Todos") else "missing"
-            col_a, col_b = st.columns([1,2])
-            with col_a:
-                btn_assign = st.button("Asignar ahora", type="primary", use_container_width=True)
-            if btn_assign:
+            if st.button("Asignar ahora", type="primary", use_container_width=True):
                 if not pickers:
                     st.error("Ingresá al menos un usuario.")
                 else:
                     try:
                         pedidos, filas = bulk_assign_usr_pick(pickers, mode=mode_key)
-                        st.success(f"Listo ✅ Asigné {pedidos} pedidos. (Filas afectadas aprox: {filas})")
+                        st.success(f"Listo. Asigné {pedidos} pedidos. (Filas afectadas aprox: {filas})")
                         st.cache_data.clear()
                     except Exception as e:
                         st.error(f"No se pudo completar la asignación: {e}")
@@ -437,10 +393,6 @@ def require_login():
 def get_orders(buscar: str | None = None,
                current_username: str | None = None,
                current_role: str | None = None) -> pd.DataFrame:
-    """
-    - Admin/operador/jefe: ven todos los pedidos (incluye usr_pick y rs).
-    - Picker: solo ve pedidos donde sap.usr_pick = current_username.
-    """
     params = []
     if current_role == "picker":
         base = "SELECT DISTINCT NUMERO, CLIENTE, rs FROM sap WHERE usr_pick = %s"
@@ -465,7 +417,6 @@ def get_orders(buscar: str | None = None,
         df["CLIENTE"] = df["CLIENTE"].apply(
             lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
         )
-    # Normalizar rs a string legible
     if "rs" in df.columns:
         df["rs"] = df["rs"].apply(lambda x: "" if x is None else str(x))
     return df
@@ -483,7 +434,7 @@ def get_order_items(numero: int) -> pd.DataFrame:
     conn = get_conn()
     df = pd.read_sql(
         """
-        SELECT NUMERO, CLIENTE, CODIGO, ItemName, CANTIDAD, COALESCE(PICKING, 'N') AS PICKING
+        SELECT NUMERO, CLIENTE, CODIGO, ItemName, CANTIDAD, COALESCE(PICKING, 'N') AS PICKING, TS
         FROM sap
         WHERE NUMERO = %s
         ORDER BY CODIGO
@@ -540,9 +491,8 @@ def get_user_progress() -> pd.DataFrame:
     df["pct_qty"] = df.apply(lambda r: int((r["qty_picked"] / r["qty_total"]) * 100) if r["qty_total"] > 0 else 0, axis=1)
     return df
 
-# ======= TS helpers (inicio de picking) =======
+# ======= TS helpers =======
 def get_order_ts(numero: int):
-    """Devuelve el MIN(TS) del pedido (o None si no hay TS)."""
     conn = get_conn(); cur = conn.cursor()
     cur.execute("SELECT MIN(TS) FROM sap WHERE NUMERO = %s", (numero,))
     ts = cur.fetchone()[0]
@@ -550,17 +500,12 @@ def get_order_ts(numero: int):
     return ts  # datetime | None
 
 def ensure_ts_if_started(numero: int):
-    """
-    Si el pedido tiene al menos un ítem en Y y TS está vacío,
-    setea TS = NOW() solo en filas con TS NULL para ese NUMERO.
-    """
     conn = get_conn(); cur = conn.cursor()
     cur.execute("""
         SELECT SUM(CASE WHEN UPPER(COALESCE(PICKING,'N'))='Y' THEN 1 ELSE 0 END)
         FROM sap WHERE NUMERO = %s
     """, (numero,))
     cnt_y = cur.fetchone()[0] or 0
-
     if cnt_y > 0:
         cur.execute("SELECT MIN(TS) FROM sap WHERE NUMERO = %s", (numero,))
         has_ts = cur.fetchone()[0]
@@ -580,12 +525,11 @@ def fmt_duration(minutes: float) -> str:
 def go(page: str):
     st.session_state.page = page
 
-# ================== LAYOUT: TOP BAR (usuario) ==================
+# ================== LAYOUT: TOP BAR ==================
 def render_topbar():
     u = st.session_state.user
     if not u:
         return
-
     st.markdown('<div id="topbar">', unsafe_allow_html=True)
     c1, csp, c2 = st.columns([3,5,2])
     with c1:
@@ -593,8 +537,8 @@ def render_topbar():
     with csp:
         if u.get("rol") in ("admin", "jefe"):
             n1, n2 = st.columns(2)
-            n1.button("📦 Pedidos", on_click=go, args=("list",), use_container_width=True)
-            n2.button("👥 Equipo",   on_click=go, args=("team",), use_container_width=True)
+            n1.button("Pedidos", on_click=go, args=("list",), use_container_width=True)
+            n2.button("Equipo",  on_click=go, args=("team",), use_container_width=True)
     with c2:
         if st.button("Cerrar sesión", use_container_width=True):
             st.session_state.user = None
@@ -643,7 +587,6 @@ def page_list():
             with col:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
                 st.markdown(f"<h4>Pedido #{numero}</h4>", unsafe_allow_html=True)
-                # Cliente + RS
                 st.markdown(
                     f"<div><small>Cliente:</small> <b>{cliente}</b>"
                     + (f" &nbsp;·&nbsp; <small>RS:</small> <b>{rs_val or '-'}</b>" if "rs" in orders_df.columns else "")
@@ -658,15 +601,13 @@ def page_list():
                 st.markdown("</div>", unsafe_allow_html=True)
             idx += 1
 
-# ================== PÁGINA: EQUIPO (admin/jefe) ==================
+# ================== PÁGINA: EQUIPO ==================
 def render_team_dashboard():
     st.subheader("Equipo – Avance por usuario (usr_pick)")
-
     df = get_user_progress()
     if df.empty:
         st.info("No hay pedidos asignados a usuarios (usr_pick está vacío).")
         return
-
     filtro = st.text_input("Filtrar usuario", "")
     if filtro:
         df = df[df["usuario"].astype(str).str.contains(filtro, case=False, na=False)]
@@ -696,7 +637,7 @@ def render_team_dashboard():
                 st.markdown("</div>", unsafe_allow_html=True)
             idx += 1
 
-# ================== PÁGINA: PEDIDOS DEL USUARIO (admin/jefe) ==================
+# ================== PÁGINA: PEDIDOS DEL USUARIO ==================
 def page_team_user_orders():
     sel = st.session_state.get("team_selected_user")
     if not sel:
@@ -722,7 +663,6 @@ def page_team_user_orders():
         st.caption(f"Avance por cantidades: {int(qty_picked)}/{int(qty_total)} ({pct}%)")
 
     buscar = st.text_input("Buscar por cliente, número o RS (solo de este usuario)")
-
     odf = get_orders(buscar=buscar, current_username=sel, current_role="picker")
     if odf.empty:
         st.info("No hay pedidos para este usuario.")
@@ -782,7 +722,6 @@ def page_detail():
             go("list")
         return
 
-    # Seguridad: si es picker, solo puede abrir si usr_pick = su usuario
     if not user_can_open_order(numero, uname, role):
         st.error("No tenés acceso a este pedido (usr_pick no coincide con tu usuario).")
         if st.button("Volver a pedidos", use_container_width=True):
@@ -803,13 +742,13 @@ def page_detail():
         st.info("Este pedido no tiene ítems.")
         return
 
-    # Estado inicial por SKU (una sola clave lógica por CODIGO)
+    # Estado inicial por SKU
     for _, r in items_df.iterrows():
         logical_key = f"pick_{numero}_{r['CODIGO']}"
         if logical_key not in st.session_state:
             st.session_state[logical_key] = (str(r["PICKING"]).upper() == "Y")
 
-    # Barra de avance por CANTIDADES + ETA + TS
+    # Progreso por cantidades
     total_qty = pd.to_numeric(items_df["CANTIDAD"], errors="coerce").fillna(0).sum()
     picked_qty = sum(
         float(r["CANTIDAD"]) for _, r in items_df.iterrows()
@@ -822,28 +761,22 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-    # ETA por cantidades
-    remaining_qty = max(total_qty - picked_qty, 0)
-    default_rate = float(st.secrets.get("PICK_RATE_UPM", 40))
-    rate = st.number_input(
-        "Velocidad (unid/min)",
-        min_value=1.0, max_value=1000.0,
-        value=default_rate, step=1.0,
-        key=f"rate_{numero}",
-        help="Rendimiento estimado para calcular el tiempo restante."
-    )
-    eta_minutes = (remaining_qty / rate) if rate > 0 else 0.0
-    eta_text = fmt_duration(eta_minutes)
-    eta_clock = (datetime.now() + timedelta(minutes=eta_minutes)).strftime("%H:%M")
-    st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock}) — faltan {int(remaining_qty)} unidades.")
-
-    # TS (inicio de picking)
-    order_ts = get_order_ts(numero)
-    if order_ts:
+    # ETA por ritmo real (sin unid/min)
+    order_ts = get_order_ts(numero)   # datetime o None
+    if order_ts and picked_qty > 0:
+        elapsed_min = max((datetime.now() - order_ts).total_seconds() / 60.0, 0.01)
+        # ETA = tiempo transcurrido * (pendiente / hecho)
+        remaining_qty = max(total_qty - picked_qty, 0.0)
+        eta_minutes = elapsed_min * (remaining_qty / picked_qty) if picked_qty > 0 else 0.0
+        eta_text = fmt_duration(eta_minutes)
+        eta_clock = (datetime.now() + timedelta(minutes=eta_minutes)).strftime("%H:%M")
+        st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock})")
         st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
-        if picked_qty > 0:
-            st.caption("Inicio de picking: se registrará al confirmar (ahora).")
+        # Sin TS o sin progreso marcado aún
+        st.caption("Tiempo estimado restante: — (se mostrará cuando inicie el picking)")
+        if order_ts:
+            st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
         else:
             st.caption("Inicio de picking: —")
 
@@ -851,17 +784,17 @@ def page_detail():
     cliente = str(items_df["CLIENTE"].iloc[0])
     st.markdown(f"**Cliente:** {cliente}")
 
-    # Encabezado alineado
+    # Encabezado
     c_left, c_right = st.columns([7,3])
     with c_left:
         st.markdown('<div class="header-line"><span>SKU / Descripción</span><span class="qty">Cantidad</span></div>', unsafe_allow_html=True)
     with c_right:
         st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    # Filas de picking (keys de botón únicas por fila usando el índice)
+    # Filas (toggle inmediato + TS al primer toggle a verde)
     for i, r in items_df.iterrows():
-        logical_key = f"pick_{numero}_{r['CODIGO']}"       # estado por SKU
-        widget_key  = f"btn_{numero}_{r['CODIGO']}_{i}"    # key única del botón
+        logical_key = f"pick_{numero}_{r['CODIGO']}"
+        widget_key  = f"btn_{numero}_{r['CODIGO']}_{i}"
         active = st.session_state[logical_key]
 
         item_name = r.get("ItemName") or ""
@@ -880,8 +813,18 @@ def page_detail():
         with c_right:
             btn_type = "primary" if active else "secondary"
             if st.button("Picking", key=widget_key, type=btn_type, use_container_width=True):
-                # alternamos el estado lógico por SKU (afecta todas las filas con el mismo CODIGO)
+                # toggle local
                 st.session_state[logical_key] = not active
+
+                # Si lo pasamos a verde y aún no hay TS en DB, lo seteo ahora
+                if not active:
+                    try:
+                        conn = get_conn(); cur = conn.cursor()
+                        cur.execute("UPDATE sap SET TS = NOW() WHERE NUMERO = %s AND TS IS NULL", (numero,))
+                        conn.commit(); cur.close(); conn.close()
+                    except Exception:
+                        pass
+
                 st.rerun()
 
     # Confirmar
@@ -891,7 +834,6 @@ def page_detail():
         if st.button("Confirmar Picking", key="confirm", use_container_width=True, type="primary"):
             try:
                 updates = []
-                # Como el estado es por CODIGO, actualizamos por CODIGO (todas las filas de ese SKU)
                 for _, r in items_df.drop_duplicates(subset=["CODIGO"]).iterrows():
                     logical_key = f"pick_{numero}_{r['CODIGO']}"
                     flag = "Y" if st.session_state.get(logical_key, False) else "N"
@@ -899,7 +841,7 @@ def page_detail():
 
                 update_picking_bulk(numero, updates)
 
-                # Si hay algún Y y aún no hay TS, persistimos NOW() en sap.TS
+                # Fallback: si al confirmar hay Y y no había TS, lo seteo
                 ensure_ts_if_started(numero)
 
                 st.success("Picking actualizado correctamente.")
