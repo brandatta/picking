@@ -282,7 +282,7 @@ def render_user_admin_panel():
                 else:
                     try:
                         conn = get_conn(); cur = conn.cursor()
-                        cur.execute("SELECT COUNT(*) FROM usuarios WHERE username=%s", (new_username,)))
+                        cur.execute("SELECT COUNT(*) FROM usuarios WHERE username=%s", (new_username,))
                         exists = cur.fetchone()[0] > 0
                         cur.close(); conn.close()
                         if exists:
