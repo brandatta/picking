@@ -431,17 +431,13 @@ def user_can_open_order(numero: int, current_username: str, current_role: str) -
     return ok
 
 def get_order_items(numero: int) -> pd.DataFrame:
-    """
-    IMPORTANTE: requiere columna ID (PK por fila) en sap.
-    """
     conn = get_conn()
     df = pd.read_sql(
         """
-        SELECT ID, NUMERO, CLIENTE, CODIGO, ItemName, CANTIDAD,
-               COALESCE(PICKING, 'N') AS PICKING, TS
+        SELECT NUMERO, CLIENTE, CODIGO, ItemName, CANTIDAD, COALESCE(PICKING, 'N') AS PICKING, TS
         FROM sap
         WHERE NUMERO = %s
-        ORDER BY ID
+        ORDER BY CODIGO
         """,
         conn, params=[numero]
     )
@@ -458,16 +454,13 @@ def get_order_items(numero: int) -> pd.DataFrame:
     df["CANTIDAD"] = df["CANTIDAD"].apply(lambda x: int(x) if float(x).is_integer() else x)
     return df
 
-def update_picking_bulk_by_id(updates: list[tuple[str, str]]):
-    """
-    updates: lista de (flag, id) -> UPDATE ... WHERE ID = %s
-    """
-    if not updates:
+def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
+    if not sku_to_flag:
         return
     conn = get_conn(); cur = conn.cursor()
     cur.executemany(
-        "UPDATE sap SET PICKING = %s WHERE ID = %s",
-        updates
+        "UPDATE sap SET PICKING = %s WHERE NUMERO = %s AND CODIGO = %s",
+        [(flag, numero, codigo) for (codigo, flag) in sku_to_flag]
     )
     conn.commit()
     cur.close(); conn.close()
@@ -501,23 +494,22 @@ def get_user_progress() -> pd.DataFrame:
 # ======= TS helpers =======
 def get_order_timing(numero: int):
     """
-    Devuelve (ts_min, elapsed_min) donde:
+    Devuelve (ts_min, elapsed_min) usando el reloj de MySQL:
       - ts_min: MIN(TS) del pedido o None
-      - elapsed_min: minutos transcurridos desde ts_min hasta NOW() de MySQL (mismo reloj/zonahoraria)
+      - elapsed_min: TIMESTAMPDIFF(MINUTE, ts_min, NOW()) o None
     """
     conn = get_conn(); cur = conn.cursor()
     cur.execute("""
-        SELECT MIN(TS), 
-               CASE 
-                 WHEN MIN(TS) IS NULL THEN NULL 
-                 ELSE TIMESTAMPDIFF(MINUTE, MIN(TS), NOW()) 
+        SELECT MIN(TS),
+               CASE WHEN MIN(TS) IS NULL THEN NULL
+                    ELSE TIMESTAMPDIFF(MINUTE, MIN(TS), NOW())
                END AS elapsed_min
         FROM sap
         WHERE NUMERO = %s
     """, (numero,))
     row = cur.fetchone()
     cur.close(); conn.close()
-    ts_min = row[0]
+    ts_min = row[0] if row else None
     elapsed_min = row[1] if row and row[1] is not None else None
     return ts_min, elapsed_min
 
@@ -764,18 +756,18 @@ def page_detail():
         st.info("Este pedido no tiene ítems.")
         return
 
-    # ===== Estado inicial por FILA (ID) =====
+    # Estado inicial por SKU
     for _, r in items_df.iterrows():
-        logical_key = f"pick_row_{int(r['ID'])}"
+        logical_key = f"pick_{numero}_{r['CODIGO']}"
         if logical_key not in st.session_state:
             st.session_state[logical_key] = (str(r["PICKING"]).upper() == "Y")
 
-    # Progreso por cantidades (sumando por filas en estado 'Y')
+    # Progreso por cantidades
     total_qty = pd.to_numeric(items_df["CANTIDAD"], errors="coerce").fillna(0).sum()
-    picked_qty = 0.0
-    for _, r in items_df.iterrows():
-        if st.session_state.get(f"pick_row_{int(r['ID'])}", False):
-            picked_qty += float(r["CANTIDAD"])
+    picked_qty = sum(
+        float(r["CANTIDAD"]) for _, r in items_df.iterrows()
+        if st.session_state.get(f"pick_{numero}_{r['CODIGO']}", False)
+    )
     pct_qty = int((picked_qty / total_qty) * 100) if total_qty > 0 else 0
 
     st.progress((picked_qty / total_qty) if total_qty > 0 else 0.0)
@@ -783,29 +775,22 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-# ===== ETA por ritmo real (usando reloj de MySQL) =====
-order_ts, elapsed_min = get_order_timing(numero)   # ts (datetime o None), minutos (int o None)
-
-if order_ts and picked_qty > 0:
-    # Blindaje: al menos 1 minuto para evitar explosiones por ruido
-    elapsed_min = max(float(elapsed_min or 0), 1.0)
-    remaining_qty = max(float(total_qty) - float(picked_qty), 0.0)
-
-    # Modelo simple de velocidad constante: ETA = elapsed * (pendiente / hecho)
-    eta_minutes = (elapsed_min * remaining_qty) / float(picked_qty) if picked_qty > 0 else 0.0
-
-    # Formateo amigable
-    eta_text  = fmt_duration(eta_minutes)
-    eta_clock = (datetime.now() + timedelta(minutes=eta_minutes)).strftime("%H:%M")
-
-    st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock})")
-    st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
-else:
-    st.caption("Tiempo estimado restante: — (se mostrará cuando inicie el picking)")
-    if order_ts:
+    # ===== ETA (usando reloj de MySQL) =====
+    order_ts, elapsed_min = get_order_timing(numero)   # datetime o None, minutos o None
+    if order_ts and picked_qty > 0:
+        elapsed_min = max(float(elapsed_min or 0), 1.0)  # al menos 1 min
+        remaining_qty = max(float(total_qty) - float(picked_qty), 0.0)
+        eta_minutes = (elapsed_min * remaining_qty) / float(picked_qty) if picked_qty > 0 else 0.0
+        eta_text  = fmt_duration(eta_minutes)
+        eta_clock = (datetime.now() + timedelta(minutes=eta_minutes)).strftime("%H:%M")
+        st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock})")
         st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
-        st.caption("Inicio de picking: —")
+        st.caption("Tiempo estimado restante: — (se mostrará cuando inicie el picking)")
+        if order_ts:
+            st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
+        else:
+            st.caption("Inicio de picking: —")
 
     # Cliente
     cliente = str(items_df["CLIENTE"].iloc[0])
@@ -820,9 +805,8 @@ else:
 
     # Filas (toggle inmediato + TS al primer toggle a verde)
     for i, r in items_df.iterrows():
-        row_id = int(r["ID"])
-        logical_key = f"pick_row_{row_id}"
-        widget_key  = f"btn_row_{row_id}_{i}"
+        logical_key = f"pick_{numero}_{r['CODIGO']}"
+        widget_key  = f"btn_{numero}_{r['CODIGO']}_{i}"
         active = st.session_state[logical_key]
 
         item_name = r.get("ItemName") or ""
@@ -841,10 +825,10 @@ else:
         with c_right:
             btn_type = "primary" if active else "secondary"
             if st.button("Picking", key=widget_key, type=btn_type, use_container_width=True):
-                # toggle local por fila (ID)
+                # toggle local
                 st.session_state[logical_key] = not active
 
-                # Si pasamos a verde y aún no hay TS en DB para el pedido, lo seteo (inicio)
+                # Si lo pasamos a verde y aún no hay TS en DB, lo seteo ahora
                 if not active:
                     try:
                         conn = get_conn(); cur = conn.cursor()
@@ -862,13 +846,12 @@ else:
         if st.button("Confirmar Picking", key="confirm", use_container_width=True, type="primary"):
             try:
                 updates = []
-                for _, r in items_df.iterrows():
-                    row_id = int(r["ID"])
-                    logical_key = f"pick_row_{row_id}"
+                for _, r in items_df.drop_duplicates(subset=["CODIGO"]).iterrows():
+                    logical_key = f"pick_{numero}_{r['CODIGO']}"
                     flag = "Y" if st.session_state.get(logical_key, False) else "N"
-                    updates.append((flag, row_id))
+                    updates.append((str(r["CODIGO"]), flag))
 
-                update_picking_bulk_by_id(updates)
+                update_picking_bulk(numero, updates)
 
                 # Fallback: si al confirmar hay Y y no había TS, lo seteo
                 ensure_ts_if_started(numero)
@@ -895,4 +878,3 @@ if require_login():
         page_team_user_orders()
     elif st.session_state.page == "detail":
         page_detail()
-
