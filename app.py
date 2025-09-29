@@ -282,6 +282,7 @@ def render_user_admin_panel():
                 else:
                     try:
                         conn = get_conn(); cur = conn.cursor()
+                        # FIX: sin paréntesis extra
                         cur.execute("SELECT COUNT(*) FROM usuarios WHERE username=%s", (new_username,))
                         exists = cur.fetchone()[0] > 0
                         cur.close(); conn.close()
@@ -492,7 +493,7 @@ def get_user_progress() -> pd.DataFrame:
     df["pct_qty"] = df.apply(lambda r: int((r["qty_picked"] / r["qty_total"]) * 100) if r["qty_total"] > 0 else 0, axis=1)
     return df
 
-# ======= TS helpers =======
+# ======= TS / ETA helpers =======
 def get_order_timing(numero: int):
     """
     Devuelve:
@@ -524,6 +525,16 @@ def get_order_timing(numero: int):
     now_ar      = row[2] if row else None
     ts_start_ar = row[3] if row else None
     return ts_start, elapsed_min, now_ar, ts_start_ar
+
+def mysql_now_ba():
+    """Devuelve NOW() ya convertido a America/Argentina/Buenos_Aires desde MySQL."""
+    conn = get_conn(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT CONVERT_TZ(NOW(), @@session.time_zone, 'America/Argentina/Buenos_Aires')")
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        cur.close(); conn.close()
 
 def ensure_ts_if_started(numero: int):
     conn = get_conn(); cur = conn.cursor()
@@ -787,42 +798,42 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-    # ===== ETA (usando reloj de MySQL y mostrando en Buenos Aires) =====
-    ts_min, elapsed_min, now_ar, ts_min_ar = get_order_timing(numero)
+    # ===== ETA (usando reloj de MySQL y fijando inicio de sesión si hace falta) =====
+    ts_start, elapsed_min_db, now_ar, ts_start_ar = get_order_timing(numero)
 
-    # Fallbacks si CONVERT_TZ no está disponible o TZ tables no cargadas
+    # Fallbacks si CONVERT_TZ no está disponible
     if now_ar is None:
         try:
             now_ar = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
         except Exception:
             now_ar = datetime.now()
-    if ts_min_ar is None and ts_min is not None:
-        try:
-            ts_min_ar = ts_min.replace(tzinfo=ZoneInfo("America/Argentina/Buenos_Aires"))
-        except Exception:
-            ts_min_ar = ts_min  # naive
 
-    if ts_min and picked_qty > 0:
-        elapsed_safe = max(float(elapsed_min or 0), 1.0)
+    # Referencia de inicio para ETA: primero la de sesión, si no la de DB
+    start_ref_ar = st.session_state.get(f"eta_start_{numero}") or ts_start_ar
+
+    # Recalcular elapsed con datetimes si tengo ambos; si no, usar el de MySQL
+    if start_ref_ar is not None and now_ar is not None:
+        elapsed_calc_min = max((now_ar - start_ref_ar).total_seconds() / 60.0, 0.0)
+    else:
+        elapsed_calc_min = elapsed_min_db if elapsed_min_db is not None else None
+
+    if (start_ref_ar is not None) and (picked_qty > 0):
+        elapsed_safe = max(float(elapsed_calc_min or 0), 1.0)  # evita /0 y jitter
         remaining_qty = max(float(total_qty) - float(picked_qty), 0.0)
-
-        if remaining_qty <= 0:
-            eta_minutes = 0.0
-        else:
-            eta_minutes = (elapsed_safe * remaining_qty) / float(picked_qty)
+        eta_minutes = (elapsed_safe * remaining_qty) / float(picked_qty) if remaining_qty > 0 else 0.0
 
         eta_text  = fmt_duration(eta_minutes)
         eta_clock_dt = now_ar + timedelta(minutes=eta_minutes)
         eta_clock = eta_clock_dt.strftime("%H:%M")
 
         st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock})")
-        st.caption(f"Inicio de picking: {ts_min_ar.strftime('%Y-%m-%d %H:%M:%S') if ts_min_ar else '—'}")
+        st.caption(f"Inicio de picking: {start_ref_ar.strftime('%Y-%m-%d %H:%M:%S') if start_ref_ar else '—'}")
     else:
         st.caption("Tiempo estimado restante: — (se mostrará cuando inicie el picking)")
-        if ts_min_ar:
-            st.caption(f"Inicio de picking: {ts_min_ar.strftime('%Y-%m-%d %H:%M:%S')}")
-        elif ts_min:
-            st.caption(f"Inicio de picking: {ts_min.strftime('%Y-%m-%d %H:%M:%S')}")
+        if start_ref_ar:
+            st.caption(f"Inicio de picking: {start_ref_ar.strftime('%Y-%m-%d %H:%M:%S')}")
+        elif ts_start:
+            st.caption(f"Inicio de picking: {ts_start.strftime('%Y-%m-%d %H:%M:%S')}")
         else:
             st.caption("Inicio de picking: —")
 
@@ -837,7 +848,7 @@ def page_detail():
     with c_right:
         st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    # Filas (toggle inmediato + TS al primer toggle a verde)
+    # Filas (toggle inmediato + set de inicio de sesión + TS en DB al primer verde)
     for i, r in items_df.iterrows():
         logical_key = f"pick_{numero}_{r['CODIGO']}"
         widget_key  = f"btn_{numero}_{r['CODIGO']}_{i}"
@@ -862,9 +873,13 @@ def page_detail():
                 # toggle local
                 st.session_state[logical_key] = not active
 
-                # Si lo pasamos a verde y aún no hay TS en DB, lo seteo ahora
+                # Al pasar a verde por primera vez de la sesión: marco inicio y sello TS en DB
                 if not active:
                     try:
+                        # 1) Fijo inicio de sesión si no existe
+                        if st.session_state.get(f"eta_start_{numero}") is None:
+                            st.session_state[f"eta_start_{numero}"] = mysql_now_ba() or datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
+                        # 2) Sello TS en DB si hay nulos
                         conn = get_conn(); cur = conn.cursor()
                         cur.execute("UPDATE sap SET TS = NOW() WHERE NUMERO = %s AND TS IS NULL", (numero,))
                         conn.commit(); cur.close(); conn.close()
@@ -892,6 +907,8 @@ def page_detail():
 
                 st.success("Picking actualizado correctamente.")
                 st.cache_data.clear()
+                # Limpiar inicio de ETA de la sesión para este pedido
+                st.session_state.pop(f"eta_start_{numero}", None)
                 go("list"); st.rerun()
             except Exception as e:
                 st.error(f"Error al actualizar: {e}")
