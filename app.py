@@ -5,6 +5,7 @@ import bcrypt
 import random
 import time
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo  # Fallback TZ si CONVERT_TZ no está disponible
 
 # ================== CONFIG ==================
 st.set_page_config(page_title="VicborDraft", layout="wide")
@@ -281,7 +282,7 @@ def render_user_admin_panel():
                 else:
                     try:
                         conn = get_conn(); cur = conn.cursor()
-                        cur.execute("SELECT COUNT(*) FROM usuarios WHERE username=%s", (new_username,))
+                        cur.execute("SELECT COUNT(*) FROM usuarios WHERE username=%s", (new_username,)))
                         exists = cur.fetchone()[0] > 0
                         cur.close(); conn.close()
                         if exists:
@@ -494,24 +495,35 @@ def get_user_progress() -> pd.DataFrame:
 # ======= TS helpers =======
 def get_order_timing(numero: int):
     """
-    Devuelve (ts_min, elapsed_min) usando el reloj de MySQL:
-      - ts_min: MIN(TS) del pedido o None
-      - elapsed_min: TIMESTAMPDIFF(MINUTE, ts_min, NOW()) o None
+    Devuelve:
+      - ts_min: MIN(TS) (datetime o None)
+      - elapsed_min: TIMESTAMPDIFF(MINUTE, MIN(TS), NOW()) (int o None)
+      - now_ar: NOW() en America/Argentina/Buenos_Aires (datetime o None)
+      - ts_min_ar: MIN(TS) en America/Argentina/Buenos_Aires (datetime o None)
     """
     conn = get_conn(); cur = conn.cursor()
-    cur.execute("""
-        SELECT MIN(TS),
-               CASE WHEN MIN(TS) IS NULL THEN NULL
-                    ELSE TIMESTAMPDIFF(MINUTE, MIN(TS), NOW())
-               END AS elapsed_min
-        FROM sap
-        WHERE NUMERO = %s
-    """, (numero,))
-    row = cur.fetchone()
-    cur.close(); conn.close()
-    ts_min = row[0] if row else None
-    elapsed_min = row[1] if row and row[1] is not None else None
-    return ts_min, elapsed_min
+    try:
+        cur.execute("""
+            SELECT
+              MIN(TS)                                                AS ts_min,
+              CASE WHEN MIN(TS) IS NULL
+                   THEN NULL
+                   ELSE TIMESTAMPDIFF(MINUTE, MIN(TS), NOW())
+              END                                                    AS elapsed_min,
+              CONVERT_TZ(NOW(), @@session.time_zone, 'America/Argentina/Buenos_Aires')   AS now_ar,
+              CONVERT_TZ(MIN(TS), @@session.time_zone, 'America/Argentina/Buenos_Aires') AS ts_min_ar
+            FROM sap
+            WHERE NUMERO = %s
+        """, (numero,))
+        row = cur.fetchone()
+    finally:
+        cur.close(); conn.close()
+
+    ts_min     = row[0] if row else None
+    elapsed    = row[1] if row and row[1] is not None else None
+    now_ar     = row[2] if row else None
+    ts_min_ar  = row[3] if row else None
+    return ts_min, elapsed, now_ar, ts_min_ar
 
 def ensure_ts_if_started(numero: int):
     conn = get_conn(); cur = conn.cursor()
@@ -775,20 +787,42 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-    # ===== ETA (usando reloj de MySQL) =====
-    order_ts, elapsed_min = get_order_timing(numero)   # datetime o None, minutos o None
-    if order_ts and picked_qty > 0:
-        elapsed_min = max(float(elapsed_min or 0), 1.0)  # al menos 1 min
+    # ===== ETA (usando reloj de MySQL y mostrando en Buenos Aires) =====
+    ts_min, elapsed_min, now_ar, ts_min_ar = get_order_timing(numero)
+
+    # Fallbacks si CONVERT_TZ no está disponible o TZ tables no cargadas
+    if now_ar is None:
+        try:
+            now_ar = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
+        except Exception:
+            now_ar = datetime.now()
+    if ts_min_ar is None and ts_min is not None:
+        try:
+            ts_min_ar = ts_min.replace(tzinfo=ZoneInfo("America/Argentina/Buenos_Aires"))
+        except Exception:
+            ts_min_ar = ts_min  # naive
+
+    if ts_min and picked_qty > 0:
+        elapsed_safe = max(float(elapsed_min or 0), 1.0)
         remaining_qty = max(float(total_qty) - float(picked_qty), 0.0)
-        eta_minutes = (elapsed_min * remaining_qty) / float(picked_qty) if picked_qty > 0 else 0.0
+
+        if remaining_qty <= 0:
+            eta_minutes = 0.0
+        else:
+            eta_minutes = (elapsed_safe * remaining_qty) / float(picked_qty)
+
         eta_text  = fmt_duration(eta_minutes)
-        eta_clock = (datetime.now() + timedelta(minutes=eta_minutes)).strftime("%H:%M")
+        eta_clock_dt = now_ar + timedelta(minutes=eta_minutes)
+        eta_clock = eta_clock_dt.strftime("%H:%M")
+
         st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock})")
-        st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
+        st.caption(f"Inicio de picking: {ts_min_ar.strftime('%Y-%m-%d %H:%M:%S') if ts_min_ar else '—'}")
     else:
         st.caption("Tiempo estimado restante: — (se mostrará cuando inicie el picking)")
-        if order_ts:
-            st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
+        if ts_min_ar:
+            st.caption(f"Inicio de picking: {ts_min_ar.strftime('%Y-%m-%d %H:%M:%S')}")
+        elif ts_min:
+            st.caption(f"Inicio de picking: {ts_min.strftime('%Y-%m-%d %H:%M:%S')}")
         else:
             st.caption("Inicio de picking: —")
 
