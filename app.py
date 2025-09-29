@@ -499,27 +499,12 @@ def get_user_progress() -> pd.DataFrame:
     return df
 
 # ======= TS helpers =======
-def get_order_timing(numero: int):
-    """
-    Devuelve (ts_min, elapsed_min) donde:
-      - ts_min: MIN(TS) del pedido o None
-      - elapsed_min: minutos transcurridos desde ts_min hasta NOW() de MySQL (mismo reloj/zonahoraria)
-    """
+def get_order_ts(numero: int):
     conn = get_conn(); cur = conn.cursor()
-    cur.execute("""
-        SELECT MIN(TS), 
-               CASE 
-                 WHEN MIN(TS) IS NULL THEN NULL 
-                 ELSE TIMESTAMPDIFF(MINUTE, MIN(TS), NOW()) 
-               END AS elapsed_min
-        FROM sap
-        WHERE NUMERO = %s
-    """, (numero,))
-    row = cur.fetchone()
+    cur.execute("SELECT MIN(TS) FROM sap WHERE NUMERO = %s", (numero,))
+    ts = cur.fetchone()[0]
     cur.close(); conn.close()
-    ts_min = row[0]
-    elapsed_min = row[1] if row and row[1] is not None else None
-    return ts_min, elapsed_min
+    return ts  # datetime | None
 
 def ensure_ts_if_started(numero: int):
     conn = get_conn(); cur = conn.cursor()
@@ -783,29 +768,22 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-# ===== ETA por ritmo real (usando reloj de MySQL) =====
-order_ts, elapsed_min = get_order_timing(numero)   # ts (datetime o None), minutos (int o None)
-
-if order_ts and picked_qty > 0:
-    # Blindaje: al menos 1 minuto para evitar explosiones por ruido
-    elapsed_min = max(float(elapsed_min or 0), 1.0)
-    remaining_qty = max(float(total_qty) - float(picked_qty), 0.0)
-
-    # Modelo simple de velocidad constante: ETA = elapsed * (pendiente / hecho)
-    eta_minutes = (elapsed_min * remaining_qty) / float(picked_qty) if picked_qty > 0 else 0.0
-
-    # Formateo amigable
-    eta_text  = fmt_duration(eta_minutes)
-    eta_clock = (datetime.now() + timedelta(minutes=eta_minutes)).strftime("%H:%M")
-
-    st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock})")
-    st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
-else:
-    st.caption("Tiempo estimado restante: — (se mostrará cuando inicie el picking)")
-    if order_ts:
+    # ETA por ritmo real (sin botón manual, se recalcula en cada render)
+    order_ts = get_order_ts(numero)   # datetime o None
+    if order_ts and picked_qty > 0:
+        elapsed_min = max((datetime.now() - order_ts).total_seconds() / 60.0, 0.01)
+        remaining_qty = max(total_qty - picked_qty, 0.0)
+        eta_minutes = elapsed_min * (remaining_qty / picked_qty) if picked_qty > 0 else 0.0
+        eta_text = fmt_duration(eta_minutes)
+        eta_clock = (datetime.now() + timedelta(minutes=eta_minutes)).strftime("%H:%M")
+        st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock})")
         st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
-        st.caption("Inicio de picking: —")
+        st.caption("Tiempo estimado restante: — (se mostrará cuando inicie el picking)")
+        if order_ts:
+            st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
+        else:
+            st.caption("Inicio de picking: —")
 
     # Cliente
     cliente = str(items_df["CLIENTE"].iloc[0])
@@ -895,3 +873,4 @@ if require_login():
         page_team_user_orders()
     elif st.session_state.page == "detail":
         page_detail()
+
