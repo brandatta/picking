@@ -768,13 +768,7 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-    # Botón para recalcular ETA
-    col_eta_btn, _ = st.columns([1, 3])
-    with col_eta_btn:
-        if st.button("Actualizar tiempo estimado", key=f"refresh_eta_{numero}", use_container_width=True):
-            st.rerun()
-
-    # ETA por ritmo real (sin unidades/min)
+    # ETA por ritmo real (sin botón manual, se recalcula en cada render)
     order_ts = get_order_ts(numero)   # datetime o None
     if order_ts and picked_qty > 0:
         elapsed_min = max((datetime.now() - order_ts).total_seconds() / 60.0, 0.01)
