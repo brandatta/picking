@@ -431,13 +431,17 @@ def user_can_open_order(numero: int, current_username: str, current_role: str) -
     return ok
 
 def get_order_items(numero: int) -> pd.DataFrame:
+    """
+    IMPORTANTE: requiere columna ID (PK por fila) en sap.
+    """
     conn = get_conn()
     df = pd.read_sql(
         """
-        SELECT NUMERO, CLIENTE, CODIGO, ItemName, CANTIDAD, COALESCE(PICKING, 'N') AS PICKING, TS
+        SELECT ID, NUMERO, CLIENTE, CODIGO, ItemName, CANTIDAD,
+               COALESCE(PICKING, 'N') AS PICKING, TS
         FROM sap
         WHERE NUMERO = %s
-        ORDER BY CODIGO
+        ORDER BY ID
         """,
         conn, params=[numero]
     )
@@ -454,13 +458,16 @@ def get_order_items(numero: int) -> pd.DataFrame:
     df["CANTIDAD"] = df["CANTIDAD"].apply(lambda x: int(x) if float(x).is_integer() else x)
     return df
 
-def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
-    if not sku_to_flag:
+def update_picking_bulk_by_id(updates: list[tuple[str, str]]):
+    """
+    updates: lista de (flag, id) -> UPDATE ... WHERE ID = %s
+    """
+    if not updates:
         return
     conn = get_conn(); cur = conn.cursor()
     cur.executemany(
-        "UPDATE sap SET PICKING = %s WHERE NUMERO = %s AND CODIGO = %s",
-        [(flag, numero, codigo) for (codigo, flag) in sku_to_flag]
+        "UPDATE sap SET PICKING = %s WHERE ID = %s",
+        updates
     )
     conn.commit()
     cur.close(); conn.close()
@@ -742,18 +749,18 @@ def page_detail():
         st.info("Este pedido no tiene ítems.")
         return
 
-    # Estado inicial por SKU
+    # ===== Estado inicial por FILA (ID) =====
     for _, r in items_df.iterrows():
-        logical_key = f"pick_{numero}_{r['CODIGO']}"
+        logical_key = f"pick_row_{int(r['ID'])}"
         if logical_key not in st.session_state:
             st.session_state[logical_key] = (str(r["PICKING"]).upper() == "Y")
 
-    # Progreso por cantidades
+    # Progreso por cantidades (sumando por filas en estado 'Y')
     total_qty = pd.to_numeric(items_df["CANTIDAD"], errors="coerce").fillna(0).sum()
-    picked_qty = sum(
-        float(r["CANTIDAD"]) for _, r in items_df.iterrows()
-        if st.session_state.get(f"pick_{numero}_{r['CODIGO']}", False)
-    )
+    picked_qty = 0.0
+    for _, r in items_df.iterrows():
+        if st.session_state.get(f"pick_row_{int(r['ID'])}", False):
+            picked_qty += float(r["CANTIDAD"])
     pct_qty = int((picked_qty / total_qty) * 100) if total_qty > 0 else 0
 
     st.progress((picked_qty / total_qty) if total_qty > 0 else 0.0)
@@ -761,17 +768,16 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-    # Botón para recalcular ETA inmediatamente
+    # Botón para recalcular ETA
     col_eta_btn, _ = st.columns([1, 3])
     with col_eta_btn:
         if st.button("Actualizar tiempo estimado", key=f"refresh_eta_{numero}", use_container_width=True):
             st.rerun()
 
-    # ETA por ritmo real (sin unid/min)
+    # ETA por ritmo real (sin unidades/min)
     order_ts = get_order_ts(numero)   # datetime o None
     if order_ts and picked_qty > 0:
         elapsed_min = max((datetime.now() - order_ts).total_seconds() / 60.0, 0.01)
-        # ETA = tiempo transcurrido * (pendiente / hecho)
         remaining_qty = max(total_qty - picked_qty, 0.0)
         eta_minutes = elapsed_min * (remaining_qty / picked_qty) if picked_qty > 0 else 0.0
         eta_text = fmt_duration(eta_minutes)
@@ -779,7 +785,6 @@ def page_detail():
         st.caption(f"Tiempo estimado restante: {eta_text} (ETA {eta_clock})")
         st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
     else:
-        # Sin TS o sin progreso marcado aún
         st.caption("Tiempo estimado restante: — (se mostrará cuando inicie el picking)")
         if order_ts:
             st.caption(f"Inicio de picking: {order_ts.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -799,8 +804,9 @@ def page_detail():
 
     # Filas (toggle inmediato + TS al primer toggle a verde)
     for i, r in items_df.iterrows():
-        logical_key = f"pick_{numero}_{r['CODIGO']}"
-        widget_key  = f"btn_{numero}_{r['CODIGO']}_{i}"
+        row_id = int(r["ID"])
+        logical_key = f"pick_row_{row_id}"
+        widget_key  = f"btn_row_{row_id}_{i}"
         active = st.session_state[logical_key]
 
         item_name = r.get("ItemName") or ""
@@ -819,10 +825,10 @@ def page_detail():
         with c_right:
             btn_type = "primary" if active else "secondary"
             if st.button("Picking", key=widget_key, type=btn_type, use_container_width=True):
-                # toggle local
+                # toggle local por fila (ID)
                 st.session_state[logical_key] = not active
 
-                # Si lo pasamos a verde y aún no hay TS en DB, lo seteo ahora
+                # Si pasamos a verde y aún no hay TS en DB para el pedido, lo seteo (inicio)
                 if not active:
                     try:
                         conn = get_conn(); cur = conn.cursor()
@@ -840,12 +846,13 @@ def page_detail():
         if st.button("Confirmar Picking", key="confirm", use_container_width=True, type="primary"):
             try:
                 updates = []
-                for _, r in items_df.drop_duplicates(subset=["CODIGO"]).iterrows():
-                    logical_key = f"pick_{numero}_{r['CODIGO']}"
+                for _, r in items_df.iterrows():
+                    row_id = int(r["ID"])
+                    logical_key = f"pick_row_{row_id}"
                     flag = "Y" if st.session_state.get(logical_key, False) else "N"
-                    updates.append((str(r["CODIGO"]), flag))
+                    updates.append((flag, row_id))
 
-                update_picking_bulk(numero, updates)
+                update_picking_bulk_by_id(updates)
 
                 # Fallback: si al confirmar hay Y y no había TS, lo seteo
                 ensure_ts_if_started(numero)
