@@ -496,22 +496,22 @@ def get_user_progress() -> pd.DataFrame:
 def get_order_timing(numero: int):
     """
     Devuelve:
-      - ts_min: MIN(TS) (datetime o None)
-      - elapsed_min: TIMESTAMPDIFF(MINUTE, MIN(TS), NOW()) (int o None)
+      - ts_start: MAX(TS) del pedido (datetime o None)
+      - elapsed_min: TIMESTAMPDIFF(MINUTE, MAX(TS), NOW()) (int o None)
       - now_ar: NOW() en America/Argentina/Buenos_Aires (datetime o None)
-      - ts_min_ar: MIN(TS) en America/Argentina/Buenos_Aires (datetime o None)
+      - ts_start_ar: MAX(TS) en America/Argentina/Buenos_Aires (datetime o None)
     """
     conn = get_conn(); cur = conn.cursor()
     try:
         cur.execute("""
             SELECT
-              MIN(TS)                                                AS ts_min,
-              CASE WHEN MIN(TS) IS NULL
+              MAX(TS) AS ts_start,
+              CASE WHEN MAX(TS) IS NULL
                    THEN NULL
-                   ELSE TIMESTAMPDIFF(MINUTE, MIN(TS), NOW())
-              END                                                    AS elapsed_min,
+                   ELSE TIMESTAMPDIFF(MINUTE, MAX(TS), NOW())
+              END AS elapsed_min,
               CONVERT_TZ(NOW(), @@session.time_zone, 'America/Argentina/Buenos_Aires')   AS now_ar,
-              CONVERT_TZ(MIN(TS), @@session.time_zone, 'America/Argentina/Buenos_Aires') AS ts_min_ar
+              CONVERT_TZ(MAX(TS), @@session.time_zone, 'America/Argentina/Buenos_Aires') AS ts_start_ar
             FROM sap
             WHERE NUMERO = %s
         """, (numero,))
@@ -519,11 +519,11 @@ def get_order_timing(numero: int):
     finally:
         cur.close(); conn.close()
 
-    ts_min     = row[0] if row else None
-    elapsed    = row[1] if row and row[1] is not None else None
-    now_ar     = row[2] if row else None
-    ts_min_ar  = row[3] if row else None
-    return ts_min, elapsed, now_ar, ts_min_ar
+    ts_start    = row[0] if row else None
+    elapsed_min = row[1] if row and row[1] is not None else None
+    now_ar      = row[2] if row else None
+    ts_start_ar = row[3] if row else None
+    return ts_start, elapsed_min, now_ar, ts_start_ar
 
 def ensure_ts_if_started(numero: int):
     conn = get_conn(); cur = conn.cursor()
