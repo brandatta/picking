@@ -388,6 +388,12 @@ def require_login():
             else:
                 st.error("Usuario o contraseña incorrectos")
         return False
+
+    # Usuario ya logueado:
+    # Si es picker, forzar que no pueda quedar en páginas restringidas.
+    if get_user_role() == "picker" and st.session_state.page in ("team", "team_user"):
+        st.session_state.page = "list"
+
     return True
 
 # ================== DATA ACCESS ==================
@@ -640,6 +646,14 @@ def page_list():
 
 # ================== PÁGINA: EQUIPO ==================
 def render_team_dashboard():
+    # Bloqueo para roles no autorizados
+    role = get_user_role()
+    if role not in ("admin", "jefe"):
+        st.warning("No tenés permisos para ver esta sección.")
+        go("list")
+        st.rerun()
+        return
+
     st.subheader("Equipo – Avance por usuario (usr_pick)")
     df = get_user_progress()
     if df.empty:
@@ -676,6 +690,14 @@ def render_team_dashboard():
 
 # ================== PÁGINA: PEDIDOS DEL USUARIO ==================
 def page_team_user_orders():
+    # Bloqueo para roles no autorizados
+    role = get_user_role()
+    if role not in ("admin", "jefe"):
+        st.warning("No tenés permisos para ver esta sección.")
+        go("list")
+        st.rerun()
+        return
+
     sel = st.session_state.get("team_selected_user")
     if not sel:
         st.warning("No hay un usuario seleccionado.")
