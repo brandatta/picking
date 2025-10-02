@@ -89,13 +89,15 @@ section.main > div { overscroll-behavior: contain; }
   box-shadow: 0 2px 10px rgba(0,0,0,0.04); background: #fff; height: 100%;
   overflow: visible;
 }
-.card h4 { margin: 0 0 6px 0; font-size: 1rem; display:flex; align-items:center; gap:8px; }
+/* Encabezado de tarjeta con más espacio para el círculo */
+.card h4 { margin: 0 0 6px 0; font-size: 1rem; display:flex; align-items:center; gap:10px; }
 .card small { color: #666; }
 
-/* Badge: círculo verde de completado */
+/* Badge: círculo verde de completado (más separación del título) */
 .dot-complete {
   display:inline-block; width:12px; height:12px; border-radius:50%;
   background:#28a745; box-shadow: 0 0 0 2px rgba(40,167,69,.15) inset;
+  margin-right: 6px;
 }
 
 /* Columnas sin recortes */
@@ -648,6 +650,7 @@ def get_order_items(numero: int) -> pd.DataFrame:
     return df
 
 def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
+    """Actualiza PICKING por SKU según lista (Y/N)."""
     if not sku_to_flag:
         return
     conn = get_conn(); cur = conn.cursor()
@@ -657,6 +660,16 @@ def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
     )
     conn.commit()
     cur.close(); conn.close()
+
+def mark_order_all_items_Y(numero: int):
+    """Marca Y en TODOS los ítems del pedido y sella TS en filas sin TS."""
+    conn = get_conn(); cur = conn.cursor()
+    try:
+        cur.execute("UPDATE sap SET PICKING = 'Y' WHERE NUMERO = %s", (numero,))
+        cur.execute("UPDATE sap SET TS = NOW() WHERE NUMERO = %s AND TS IS NULL", (numero,))
+        conn.commit()
+    finally:
+        cur.close(); conn.close()
 
 # ======= Progreso por usuario (usr_pick) =======
 @st.cache_data(ttl=15)
@@ -686,13 +699,6 @@ def get_user_progress() -> pd.DataFrame:
 
 # ======= TS / ETA helpers =======
 def get_order_timing(numero: int):
-    """
-    Devuelve:
-      - ts_start: MAX(TS) del pedido (datetime o None)
-      - elapsed_min: TIMESTAMPDIFF(MINUTE, MAX(TS), NOW()) (int o None)
-      - now_ar: NOW() en America/Argentina/Buenos_Aires (datetime o None)
-      - ts_start_ar: MAX(TS) en America/Argentina/Buenos_Aires (datetime o None)
-    """
     conn = get_conn(); cur = conn.cursor()
     try:
         cur.execute("""
@@ -718,7 +724,6 @@ def get_order_timing(numero: int):
     return ts_start, elapsed_min, now_ar, ts_start_ar
 
 def mysql_now_ba():
-    """Devuelve NOW() ya convertido a America/Argentina/Buenos_Aires desde MySQL."""
     conn = get_conn(); cur = conn.cursor()
     try:
         cur.execute("SELECT CONVERT_TZ(NOW(), @@session.time_zone, 'America/Argentina/Buenos_Aires')")
@@ -813,7 +818,6 @@ def page_list():
 
             with col:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
-                # Encabezado con círculo verde si está completo
                 header_html = f"<h4>{'<span class=\"dot-complete\" title=\"Completado\"></span>' if all_picked else ''}Pedido #{numero}</h4>"
                 st.markdown(header_html, unsafe_allow_html=True)
 
@@ -1053,7 +1057,7 @@ def page_detail():
     with c_right:
         st.markdown("&nbsp;", unsafe_allow_html=True)
 
-    # Filas
+    # Filas (toggle inmediato + set de inicio de sesión + TS en DB al primer verde)
     for i, r in items_df.iterrows():
         logical_key = f"pick_{numero}_{r['CODIGO']}"
         widget_key  = f"btn_{numero}_{r['CODIGO']}_{i}"
@@ -1075,7 +1079,9 @@ def page_detail():
         with c_right:
             btn_type = "primary" if active else "secondary"
             if st.button("Picking", key=widget_key, type=btn_type, use_container_width=True):
+                # toggle local
                 st.session_state[logical_key] = not active
+                # Al pasar a verde por primera vez de la sesión: marco inicio y sello TS en DB
                 if not active:
                     try:
                         if st.session_state.get(f"eta_start_{numero}") is None:
@@ -1094,18 +1100,10 @@ def page_detail():
     with ccf:
         if st.button("Confirmar Picking", key="confirm", use_container_width=True, type="primary"):
             try:
-                updates = []
-                for _, r in items_df.drop_duplicates(subset=["CODIGO"]).iterrows():
-                    logical_key = f"pick_{numero}_{r['CODIGO']}"
-                    flag = "Y" if st.session_state.get(logical_key, False) else "N"
-                    updates.append((str(r["CODIGO"]), flag))
+                # NUEVO: Marcar Y en TODOS los ítems del pedido (aunque no estén tildados)
+                mark_order_all_items_Y(numero)
 
-                # <-- AQUÍ se imprime la "Y" (o "N") en sap.PICKING por SKU
-                update_picking_bulk(numero, updates)
-
-                ensure_ts_if_started(numero)
-
-                st.success("Picking actualizado correctamente.")
+                st.success("Picking actualizado (todos los ítems marcados en Y).")
                 st.cache_data.clear()
                 st.session_state.pop(f"eta_start_{numero}", None)
                 nav_to("list", selected_pedido=None)
