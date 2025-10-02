@@ -6,15 +6,45 @@ import random
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo  # Fallback TZ si CONVERT_TZ no está disponible
+import hmac, hashlib, base64
+from urllib.parse import urlencode
 
 # ================== CONFIG ==================
 st.set_page_config(page_title="VicborDraft", layout="wide")
+
+# ================== HELPERS QUERY PARAMS (compat 1.25+) ==================
+def _qp_get() -> dict:
+    # Streamlit >= 1.31
+    if hasattr(st, "query_params"):
+        return st.query_params.to_dict()
+    # Fallback: experimental
+    try:
+        return st.experimental_get_query_params()
+    except Exception:
+        return {}
+
+def _qp_set(d: dict):
+    if hasattr(st, "query_params"):
+        st.query_params.from_dict(d)
+    else:
+        try:
+            st.experimental_set_query_params(**d)
+        except Exception:
+            pass
 
 # ================== ESTILOS ==================
 st.markdown("""
 <style>
 .block-container { padding-top: 2.5rem !important; }
 h1, h2, h3 { margin-top: 0.2rem !important; margin-bottom: 0.8rem !important; line-height: 1.2 !important; white-space: normal !important; }
+
+/* Evita (en lo posible) pull-to-refresh en móvil */
+html, body {
+  overscroll-behavior-y: none;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+}
+section.main > div { overscroll-behavior: contain; }
 
 /* Tarjetas */
 .card {
@@ -130,6 +160,59 @@ def get_user_role():
 def get_username():
     u = st.session_state.get("user")
     return (u or {}).get("username")
+
+# ================== AUTH TOKEN (autologin) ==================
+def _auth_secret() -> bytes:
+    # Configurá en .streamlit/secrets.toml:
+    # APP_AUTH_SECRET = "una-cadena-aleatoria-larga"
+    raw = st.secrets.get("APP_AUTH_SECRET", "change-me-please-super-secret")
+    return raw.encode("utf-8")
+
+def _sign(msg: str) -> str:
+    sig = hmac.new(_auth_secret(), msg.encode("utf-8"), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(sig).decode().rstrip("=")
+
+def issue_auth_token(username: str, role: str) -> str:
+    ts = str(int(time.time()))
+    payload = f"{username}|{role}|{ts}"
+    sig = _sign(payload)
+    token = f"{payload}|{sig}"
+    return base64.urlsafe_b64encode(token.encode()).decode()
+
+def parse_auth_token(token_b64: str):
+    try:
+        token = base64.urlsafe_b64decode(token_b64.encode()).decode()
+        parts = token.split("|")
+        if len(parts) != 4:
+            return None
+        username, role, ts, sig = parts
+        payload = f"{username}|{role}|{ts}"
+        if hmac.compare_digest(_sign(payload), sig):
+            # Expiración (12h). Ajustá si querés.
+            if (time.time() - int(ts)) > 12*3600:
+                return None
+            return {"username": username, "rol": role, "ts": int(ts)}
+    except Exception:
+        return None
+    return None
+
+def set_query_auth(token: str):
+    qp = _qp_get()
+    qp["auth"] = token
+    _qp_set(qp)
+
+def clear_query_auth():
+    qp = _qp_get()
+    if "auth" in qp:
+        del qp["auth"]
+    _qp_set(qp)
+
+def get_query_auth() -> str | None:
+    qp = _qp_get()
+    val = qp.get("auth")
+    if isinstance(val, list):
+        return val[0]
+    return val
 
 # ================== AUTH ==================
 def validar_usuario(username: str, password: str):
@@ -282,7 +365,6 @@ def render_user_admin_panel():
                 else:
                     try:
                         conn = get_conn(); cur = conn.cursor()
-                        # FIX: sin paréntesis extra
                         cur.execute("SELECT COUNT(*) FROM usuarios WHERE username=%s", (new_username,))
                         exists = cur.fetchone()[0] > 0
                         cur.close(); conn.close()
@@ -337,6 +419,7 @@ def render_user_admin_panel():
 
 # ================== LOGIN ==================
 def require_login():
+    # Estados base
     if "user" not in st.session_state:
         st.session_state.user = None
     if "page" not in st.session_state:
@@ -346,55 +429,78 @@ def require_login():
     if "team_selected_user" not in st.session_state:
         st.session_state.team_selected_user = None
 
+    # --- AUTOLOGIN POR TOKEN EN URL ---
     if st.session_state.user is None:
-        st.markdown("""
-        <style>
-        header[data-testid="stHeader"] { display: none; }
-        div[data-testid="stToolbar"] { display: none; }
-        .block-container { padding-top: 0 !important; }
-        .login-card { margin: 4vh auto !important; }
-        </style>
-        """, unsafe_allow_html=True)
+        tok = get_query_auth()
+        if tok:
+            data = parse_auth_token(tok)
+            if data:
+                # verifico que el usuario siga existiendo y recupero sus datos
+                try:
+                    conn = get_conn(); cur = conn.cursor(dictionary=True)
+                    cur.execute(
+                        "SELECT id, username, password_hash, nombre, rol FROM usuarios WHERE username=%s",
+                        (data["username"],)
+                    )
+                    u = cur.fetchone()
+                    cur.close(); conn.close()
+                    if u and u.get("rol") == data.get("rol"):
+                        st.session_state.user = u
+                except Exception:
+                    pass
 
-        st.markdown('<div class="login-card">', unsafe_allow_html=True)
-        st.header("Iniciar sesión")
-        username = st.text_input("Usuario").strip()
-        password = st.text_input("Contraseña", type="password").strip()
-        col_l, col_r = st.columns([1,1])
-        with col_l:
-            login_clicked = st.button("Ingresar", type="primary", use_container_width=True)
-        with col_r:
-            st.write("")
-        st.markdown('</div>', unsafe_allow_html=True)
+    # Si ya hay usuario (por token o login normal), mostramos app
+    if st.session_state.user is not None:
+        # picker no puede quedar en páginas restringidas
+        if get_user_role() == "picker" and st.session_state.page in ("team", "team_user"):
+            st.session_state.page = "list"
+        return True
 
+    # --- FLUJO DE LOGIN MANUAL ---
+    st.markdown("""
+    <style>
+    header[data-testid="stHeader"] { display: none; }
+    div[data-testid="stToolbar"] { display: none; }
+    .block-container { padding-top: 0 !important; }
+    .login-card { margin: 4vh auto !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="login-card">', unsafe_allow_html=True)
+    st.header("Iniciar sesión")
+    username = st.text_input("Usuario").strip()
+    password = st.text_input("Contraseña", type="password").strip()
+    col_l, col_r = st.columns([1,1])
+    with col_l:
+        login_clicked = st.button("Ingresar", type="primary", use_container_width=True)
+    with col_r:
+        st.write("")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    try:
+        if count_usuarios() == 0 and st.secrets.get("SETUP_TOKEN") is not None:
+            render_setup_panel()
+    except Exception as e:
+        st.error(f"Error verificando usuarios: {e}")
+
+    if login_clicked:
         try:
-            if count_usuarios() == 0 and st.secrets.get("SETUP_TOKEN") is not None:
-                render_setup_panel()
+            ensure_usuarios_table()
         except Exception as e:
-            st.error(f"Error verificando usuarios: {e}")
+            st.error(f"Error preparando tabla de usuarios: {e}")
+            return False
 
-        if login_clicked:
-            try:
-                ensure_usuarios_table()
-            except Exception as e:
-                st.error(f"Error preparando tabla de usuarios: {e}")
-                return False
-
-            user = validar_usuario(username, password)
-            if user:
-                st.session_state.user = user
-                st.success(f"Bienvenido {user.get('nombre') or user['username']} ({user.get('rol','')})")
-                st.rerun()
-            else:
-                st.error("Usuario o contraseña incorrectos")
-        return False
-
-    # Usuario ya logueado:
-    # Si es picker, forzar que no pueda quedar en páginas restringidas.
-    if get_user_role() == "picker" and st.session_state.page in ("team", "team_user"):
-        st.session_state.page = "list"
-
-    return True
+        user = validar_usuario(username, password)
+        if user:
+            st.session_state.user = user
+            # emitir token y guardarlo en la URL para autologin tras refresh
+            t = issue_auth_token(user["username"], user.get("rol",""))
+            set_query_auth(t)
+            st.success(f"Bienvenido {user.get('nombre') or user['username']} ({user.get('rol','')})")
+            st.rerun()
+        else:
+            st.error("Usuario o contraseña incorrectos")
+    return False
 
 # ================== DATA ACCESS ==================
 @st.cache_data(ttl=30)
@@ -584,6 +690,9 @@ def render_topbar():
             n2.button("Equipo",  on_click=go, args=("team",), use_container_width=True)
     with c2:
         if st.button("Cerrar sesión", use_container_width=True):
+            # limpiar token de autologin de la URL
+            clear_query_auth()
+            # limpiar estados
             st.session_state.user = None
             for k in list(st.session_state.keys()):
                 if k.startswith("pick_") or k.startswith("btn_pick_"):
@@ -903,7 +1012,7 @@ def page_detail():
                             st.session_state[f"eta_start_{numero}"] = mysql_now_ba() or datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
                         # 2) Sello TS en DB si hay nulos
                         conn = get_conn(); cur = conn.cursor()
-                        cur.execute("UPDATE sap SET TS = NOW() WHERE NUMERO = %s AND TS IS NULL", (numero,))
+                        cur.execute("UPDATE sap SET TS = NOW() WHERE NUMERO = %s AND TS IS NULL", (numero,))  # solo pone TS en filas sin TS
                         conn.commit(); cur.close(); conn.close()
                     except Exception:
                         pass
