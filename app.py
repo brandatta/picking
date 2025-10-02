@@ -665,15 +665,21 @@ def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
     cur.close(); conn.close()
 
 def mark_order_all_items_Y(numero: int):
-    """Marca Y en TODOS los ítems del pedido y sella TS en filas sin TS."""
+    """Marca Y en TODOS los ítems del pedido, sella TS en filas sin TS
+    y registra el timestamp de confirmación en ts_c."""
     conn = get_conn(); cur = conn.cursor()
     try:
+        # 1) Todos los ítems a 'Y'
         cur.execute("UPDATE sap SET PICKING = 'Y' WHERE NUMERO = %s", (numero,))
+        # 2) Sella TS solo donde esté NULL
         cur.execute("UPDATE sap SET TS = NOW() WHERE NUMERO = %s AND TS IS NULL", (numero,))
+        # 3) Marca timestamp de confirmación del pedido
+        #    - Si querés que solo se setee la PRIMERA vez, usá: ... WHERE NUMERO = %s AND TS_C IS NULL
+        cur.execute("UPDATE sap SET TS_C = NOW() WHERE NUMERO = %s", (numero,))
         conn.commit()
     finally:
         cur.close(); conn.close()
-
+        
 # ======= Progreso por usuario (usr_pick) =======
 @st.cache_data(ttl=15)
 def get_user_progress() -> pd.DataFrame:
