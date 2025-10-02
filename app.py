@@ -32,6 +32,43 @@ def _qp_set(d: dict):
         except Exception:
             pass
 
+# ================== NAV EN QUERY PARAMS ==================
+def _nav_from_qp():
+    """Lee navegación desde la URL (page/pedido)."""
+    qp = _qp_get()
+    page = qp.get("page")
+    if isinstance(page, list): page = page[0]
+    pedido = qp.get("pedido")
+    if isinstance(pedido, list): pedido = pedido[0]
+    try:
+        pedido = int(pedido) if pedido not in (None, "", []) else None
+    except Exception:
+        pedido = None
+    return page, pedido
+
+def _nav_to_qp(page: str, pedido: int | None):
+    """Escribe navegación a la URL solo si cambió (evita loops)."""
+    qp = _qp_get()
+    changed = False
+
+    if qp.get("page") != page:
+        qp["page"] = page
+        changed = True
+
+    target_pedido = None if pedido is None else str(pedido)
+    cur_pedido = qp.get("pedido")
+    if isinstance(cur_pedido, list):
+        cur_pedido = cur_pedido[0]
+    if (cur_pedido or None) != target_pedido:
+        if target_pedido is None:
+            qp.pop("pedido", None)
+        else:
+            qp["pedido"] = target_pedido
+        changed = True
+
+    if changed:
+        _qp_set(qp)
+
 # ================== ESTILOS ==================
 st.markdown("""
 <style>
@@ -97,6 +134,22 @@ div.stButton > button {
 #topbar { margin-bottom: .25rem; }
 @media (max-width: 900px) { #topbar .stButton > button { font-size: 0.9rem; } }
 </style>
+""", unsafe_allow_html=True)
+
+# Minimiza pull-to-refresh en el tope (best effort)
+st.markdown("""
+<script>
+(function(){
+  let startY = 0;
+  window.addEventListener('touchstart', function(e){ startY = e.touches[0].clientY; }, {passive:true});
+  window.addEventListener('touchmove', function(e){
+    const el = document.scrollingElement || document.documentElement;
+    const atTop = el.scrollTop <= 0;
+    const goingDown = (e.touches[0].clientY > startY);
+    if (atTop && goingDown) { e.preventDefault(); }
+  }, {passive:false});
+})();
+</script>
 """, unsafe_allow_html=True)
 
 # ================== CONEXIÓN MYSQL ==================
@@ -219,11 +272,17 @@ def go(page: str):
     st.session_state.page = page
 
 def nav_to(page: str, **state):
-    """Navega y forza rerun en la misma interacción (evita 'recarga intermedia')."""
+    """Navega, sincroniza URL (page/pedido) y forza rerun en la misma interacción."""
     for k, v in state.items():
         st.session_state[k] = v
-    go(page)
+    st.session_state.page = page
+    _nav_to_qp(page, st.session_state.get("selected_pedido"))
     st.rerun()
+
+def go_and_sync(page: str):
+    """Para on_click simples del topbar sin estado adicional."""
+    st.session_state.page = page
+    _nav_to_qp(page, st.session_state.get("selected_pedido"))
 
 # ================== AUTH ==================
 def validar_usuario(username: str, password: str):
@@ -465,6 +524,14 @@ def require_login():
         # picker no puede quedar en páginas restringidas
         if get_user_role() == "picker" and st.session_state.page in ("team", "team_user"):
             st.session_state.page = "list"
+
+        # Rehidrata navegación desde la URL (soporta refresh / pull-to-refresh)
+        page_qp, pedido_qp = _nav_from_qp()
+        if page_qp:
+            st.session_state.page = page_qp
+        if pedido_qp is not None:
+            st.session_state.selected_pedido = pedido_qp
+
         return True
 
     # --- FLUJO DE LOGIN MANUAL ---
@@ -693,18 +760,20 @@ def render_topbar():
     with csp:
         if u.get("rol") in ("admin", "jefe"):
             n1, n2 = st.columns(2)
-            n1.button("Pedidos", on_click=go, args=("list",), use_container_width=True)
-            n2.button("Equipo",  on_click=go, args=("team",), use_container_width=True)
+            n1.button("Pedidos", on_click=go_and_sync, args=("list",), use_container_width=True)
+            n2.button("Equipo",  on_click=go_and_sync, args=("team",), use_container_width=True)
     with c2:
         if st.button("Cerrar sesión", use_container_width=True):
-            # limpiar token de autologin de la URL
+            # limpiar token de autologin y navegación de la URL
             clear_query_auth()
+            _qp_set({})  # limpia page/pedido también
+
             # limpiar estados
             st.session_state.user = None
             for k in list(st.session_state.keys()):
                 if k.startswith("pick_") or k.startswith("btn_pick_"):
                     del st.session_state[k]
-                if k in ("team_selected_user", "selected_pedido"):
+                if k in ("team_selected_user", "selected_pedido", "page"):
                     del st.session_state[k]
             st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
@@ -754,7 +823,7 @@ def page_list():
                 )
                 st.progress(pct/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct}%)")
-                # Cambio: navegar con rerun inmediato
+                # Navegar a detalle con sync URL + rerun inmediato
                 if st.button("Ver detalle", key=f"open_{numero}", use_container_width=True):
                     nav_to("detail", selected_pedido=int(numero))
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -766,7 +835,7 @@ def render_team_dashboard():
     role = get_user_role()
     if role not in ("admin", "jefe"):
         st.warning("No tenés permisos para ver esta sección.")
-        go("list")
+        go_and_sync("list")
         st.rerun()
         return
 
@@ -800,7 +869,7 @@ def render_team_dashboard():
                 st.caption(f"Avance por cantidades: {int(qty_picked)}/{int(qty_total)} ({pct}%)")
                 if st.button("Ver pedidos", key=f"ver_{usuario}", use_container_width=True):
                     st.session_state.team_selected_user = usuario
-                    go("team_user")
+                    go_and_sync("team_user")
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
             idx += 1
@@ -811,7 +880,7 @@ def page_team_user_orders():
     role = get_user_role()
     if role not in ("admin", "jefe"):
         st.warning("No tenés permisos para ver esta sección.")
-        go("list")
+        go_and_sync("list")
         st.rerun()
         return
 
@@ -819,14 +888,14 @@ def page_team_user_orders():
     if not sel:
         st.warning("No hay un usuario seleccionado.")
         if st.button("Volver al equipo", use_container_width=True):
-            go("team"); st.rerun()
+            go_and_sync("team"); st.rerun()
         return
 
     h_left, h_right = st.columns([3,1])
     with h_left:
         st.subheader(f"Pedidos de: {sel}")
     with h_right:
-        st.button("← Seleccionar otro usuario", on_click=go, args=("team",), use_container_width=True)
+        st.button("← Seleccionar otro usuario", on_click=go_and_sync, args=("team",), use_container_width=True)
 
     dfp = get_user_progress()
     r = dfp[dfp["usuario"].astype(str).str.lower() == sel.lower()]
@@ -844,9 +913,9 @@ def page_team_user_orders():
         st.info("No hay pedidos para este usuario.")
         c1, c2 = st.columns([1,1])
         with c1:
-            st.button("← Volver al equipo", on_click=go, args=("team",), use_container_width=True)
+            st.button("← Volver al equipo", on_click=go_and_sync, args=("team",), use_container_width=True)
         with c2:
-            st.button("Ir a Pedidos", on_click=go, args=("list",), use_container_width=True)
+            st.button("Ir a Pedidos", on_click=go_and_sync, args=("list",), use_container_width=True)
         return
 
     i2, t2 = 0, len(odf)
@@ -874,7 +943,7 @@ def page_team_user_orders():
                 )
                 st.progress(pct_card/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct_card}%)")
-                # Cambio: navegar con rerun inmediato
+                # Navegar a detalle con sync URL + rerun inmediato
                 if st.button("Ver detalle", key=f"open_user_{sel}_{numero}", use_container_width=True):
                     nav_to("detail", selected_pedido=int(numero))
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -882,9 +951,9 @@ def page_team_user_orders():
 
     c1, c2 = st.columns([1,1])
     with c1:
-        st.button("← Volver al equipo", on_click=go, args=("team",), use_container_width=True)
+        st.button("← Volver al equipo", on_click=go_and_sync, args=("team",), use_container_width=True)
     with c2:
-        st.button("Ir a Pedidos", on_click=go, args=("list",), use_container_width=True)
+        st.button("Ir a Pedidos", on_click=go_and_sync, args=("list",), use_container_width=True)
 
 # ================== PÁGINA: DETALLE ==================
 def page_detail():
@@ -895,13 +964,13 @@ def page_detail():
     if not numero:
         st.warning("No hay pedido seleccionado.")
         if st.button("Volver a pedidos", use_container_width=True):
-            go("list"); st.rerun()
+            nav_to("list", selected_pedido=None)
         return
 
     if not user_can_open_order(numero, uname, role):
         st.error("No tenés acceso a este pedido (usr_pick no coincide con tu usuario).")
         if st.button("Volver a pedidos", use_container_width=True):
-            go("list"); st.rerun()
+            nav_to("list", selected_pedido=None)
         return
 
     left, right = st.columns([3,1])
@@ -910,7 +979,7 @@ def page_detail():
     with right:
         st.write("")
         if st.button("Volver a pedidos", use_container_width=True):
-            go("list"); st.rerun()
+            nav_to("list", selected_pedido=None)
             return
 
     items_df = get_order_items(numero)
@@ -1017,7 +1086,8 @@ def page_detail():
                     try:
                         # 1) Fijo inicio de sesión si no existe
                         if st.session_state.get(f"eta_start_{numero}") is None:
-                            st.session_state[f"eta_start_{numero}"] = mysql_now_ba() or datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
+                            st.session_state[f"eta_start_{numero}"] = mysql_now_ba() \
+                                or datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
                         # 2) Sello TS en DB si hay nulos
                         conn = get_conn(); cur = conn.cursor()
                         cur.execute("UPDATE sap SET TS = NOW() WHERE NUMERO = %s AND TS IS NULL", (numero,))  # solo pone TS en filas sin TS
@@ -1048,7 +1118,7 @@ def page_detail():
                 st.cache_data.clear()
                 # Limpiar inicio de ETA de la sesión para este pedido
                 st.session_state.pop(f"eta_start_{numero}", None)
-                go("list"); st.rerun()
+                nav_to("list", selected_pedido=None)
             except Exception as e:
                 st.error(f"Error al actualizar: {e}")
     st.markdown('</div>', unsafe_allow_html=True)
