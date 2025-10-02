@@ -89,16 +89,8 @@ section.main > div { overscroll-behavior: contain; }
   box-shadow: 0 2px 10px rgba(0,0,0,0.04); background: #fff; height: 100%;
   overflow: visible;
 }
-/* Encabezado de tarjeta con más espacio para el círculo */
-.card h4 { margin: 0 0 6px 0; font-size: 1rem; display:flex; align-items:center; gap:10px; }
+.card h4 { margin: 0 0 6px 0; font-size: 1rem; }
 .card small { color: #666; }
-
-/* Badge: círculo verde de avance (más separación del título) */
-.dot-complete {
-  display:inline-block; width:12px; height:12px; border-radius:50%;
-  background:#28a745; box-shadow: 0 0 0 2px rgba(40,167,69,.15) inset;
-  margin-right: 6px;
-}
 
 /* Columnas sin recortes */
 div[data-testid="column"] { overflow: visible !important; }
@@ -141,6 +133,13 @@ div.stButton > button {
 #topbar .stButton > button { white-space: normal !important; min-height: 40px; padding: 10px 12px !important; line-height: 1.2 !important; font-size: 0.95rem; }
 #topbar { margin-bottom: .25rem; }
 @media (max-width: 900px) { #topbar .stButton > button { font-size: 0.9rem; } }
+
+/* Indicador de pedido con picking confirmado */
+.order-dot {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  margin-left: 8px; vertical-align: middle;
+}
+.order-dot.ok { background: #2ecc71; box-shadow: 0 0 0 2px rgba(46,204,113,.2); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -224,6 +223,8 @@ def get_username():
 
 # ================== AUTH TOKEN (autologin) ==================
 def _auth_secret() -> bytes:
+    # Configurá en .streamlit/secrets.toml:
+    # APP_AUTH_SECRET = "una-cadena-aleatoria-larga"
     raw = st.secrets.get("APP_AUTH_SECRET", "change-me-please-super-secret")
     return raw.encode("utf-8")
 
@@ -247,6 +248,7 @@ def parse_auth_token(token_b64: str):
         username, role, ts, sig = parts
         payload = f"{username}|{role}|{ts}"
         if hmac.compare_digest(_sign(payload), sig):
+            # Expiración (12h). Ajustá si querés.
             if (time.time() - int(ts)) > 12*3600:
                 return None
             return {"username": username, "rol": role, "ts": int(ts)}
@@ -510,6 +512,7 @@ def require_login():
         if tok:
             data = parse_auth_token(tok)
             if data:
+                # verifico que el usuario siga existiendo y recupero sus datos
                 try:
                     conn = get_conn(); cur = conn.cursor(dictionary=True)
                     cur.execute(
@@ -529,7 +532,7 @@ def require_login():
         if get_user_role() == "picker" and st.session_state.page in ("team", "team_user"):
             st.session_state.page = "list"
 
-        # Rehidrata navegación desde la URL
+        # Rehidrata navegación desde la URL (soporta refresh / pull-to-refresh)
         page_qp, pedido_qp = _nav_from_qp()
         if page_qp:
             st.session_state.page = page_qp
@@ -575,6 +578,7 @@ def require_login():
         user = validar_usuario(username, password)
         if user:
             st.session_state.user = user
+            # emitir token y guardarlo en la URL para autologin tras refresh
             t = issue_auth_token(user["username"], user.get("rol",""))
             set_query_auth(t)
             st.success(f"Bienvenido {user.get('nombre') or user['username']} ({user.get('rol','')})")
@@ -650,7 +654,6 @@ def get_order_items(numero: int) -> pd.DataFrame:
     return df
 
 def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
-    """Actualiza PICKING por SKU según lista (Y/N)."""
     if not sku_to_flag:
         return
     conn = get_conn(); cur = conn.cursor()
@@ -699,6 +702,13 @@ def get_user_progress() -> pd.DataFrame:
 
 # ======= TS / ETA helpers =======
 def get_order_timing(numero: int):
+    """
+    Devuelve:
+      - ts_start: MAX(TS) del pedido (datetime o None)
+      - elapsed_min: TIMESTAMPDIFF(MINUTE, MAX(TS), NOW()) (int o None)
+      - now_ar: NOW() en America/Argentina/Buenos_Aires (datetime o None)
+      - ts_start_ar: MAX(TS) en America/Argentina/Buenos_Aires (datetime o None)
+    """
     conn = get_conn(); cur = conn.cursor()
     try:
         cur.execute("""
@@ -724,6 +734,7 @@ def get_order_timing(numero: int):
     return ts_start, elapsed_min, now_ar, ts_start_ar
 
 def mysql_now_ba():
+    """Devuelve NOW() ya convertido a America/Argentina/Buenos_Aires desde MySQL."""
     conn = get_conn(); cur = conn.cursor()
     try:
         cur.execute("SELECT CONVERT_TZ(NOW(), @@session.time_zone, 'America/Argentina/Buenos_Aires')")
@@ -770,8 +781,11 @@ def render_topbar():
             n2.button("Equipo",  on_click=go_and_sync, args=("team",), use_container_width=True)
     with c2:
         if st.button("Cerrar sesión", use_container_width=True):
+            # limpiar token de autologin y navegación de la URL
             clear_query_auth()
-            _qp_set({})
+            _qp_set({})  # limpia page/pedido también
+
+            # limpiar estados
             st.session_state.user = None
             for k in list(st.session_state.keys()):
                 if k.startswith("pick_") or k.startswith("btn_pick_"):
@@ -814,12 +828,17 @@ def page_list():
             total_items = len(items)
             picked = (items["PICKING"] == "Y").sum() if total_items > 0 else 0
             pct = int((picked / total_items) * 100) if total_items > 0 else 0
-            has_progress = picked > 0  # círculo si hay al menos una Y
 
             with col:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
-                header_html = f"<h4>{'<span class=\"dot-complete\" title=\"Con avance\"></span>' if has_progress else ''}Pedido #{numero}</h4>"
-                st.markdown(header_html, unsafe_allow_html=True)
+
+                # Título con punto verde si hay al menos un Y
+                has_any_y = (items["PICKING"] == "Y").any()
+                title_html = f"<h4>Pedido #{numero}"
+                if has_any_y:
+                    title_html += '<span class="order-dot ok" title="Con picking confirmado"></span>'
+                title_html += "</h4>"
+                st.markdown(title_html, unsafe_allow_html=True)
 
                 st.markdown(
                     f"<div><small>Cliente:</small> <b>{cliente}</b>"
@@ -829,6 +848,7 @@ def page_list():
                 )
                 st.progress(pct/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct}%)")
+                # Navegar a detalle con sync URL + rerun inmediato
                 if st.button("Ver detalle", key=f"open_{numero}", use_container_width=True):
                     nav_to("detail", selected_pedido=int(numero))
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -836,6 +856,7 @@ def page_list():
 
 # ================== PÁGINA: EQUIPO ==================
 def render_team_dashboard():
+    # Bloqueo para roles no autorizados
     role = get_user_role()
     if role not in ("admin", "jefe"):
         st.warning("No tenés permisos para ver esta sección.")
@@ -880,6 +901,7 @@ def render_team_dashboard():
 
 # ================== PÁGINA: PEDIDOS DEL USUARIO ==================
 def page_team_user_orders():
+    # Bloqueo para roles no autorizados
     role = get_user_role()
     if role not in ("admin", "jefe"):
         st.warning("No tenés permisos para ver esta sección.")
@@ -934,12 +956,18 @@ def page_team_user_orders():
             total_items = len(items_df)
             picked = (items_df["PICKING"] == "Y").sum() if total_items > 0 else 0
             pct_card = int((picked/total_items)*100) if total_items > 0 else 0
-            has_progress = picked > 0  # círculo si hay al menos una Y
 
             with c:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
-                header_html = f"<h4>{'<span class=\"dot-complete\" title=\"Con avance\"></span>' if has_progress else ''}Pedido #{numero}</h4>"
-                st.markdown(header_html, unsafe_allow_html=True)
+
+                # Título con punto verde si hay al menos un Y
+                has_any_y = (items_df["PICKING"] == "Y").any()
+                title_html = f"<h4>Pedido #{numero}"
+                if has_any_y:
+                    title_html += '<span class="order-dot ok" title="Con picking confirmado"></span>'
+                title_html += "</h4>"
+                st.markdown(title_html, unsafe_allow_html=True)
+
                 st.markdown(
                     f"<div><small>Cliente:</small> <b>{cliente}</b>"
                     + (f" &nbsp;·&nbsp; <small>RS:</small> <b>{rs_val or '-'}</b>" if "rs" in odf.columns else "")
@@ -948,6 +976,7 @@ def page_team_user_orders():
                 )
                 st.progress(pct_card/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct_card}%)")
+                # Navegar a detalle con sync URL + rerun inmediato
                 if st.button("Ver detalle", key=f"open_user_{sel}_{numero}", use_container_width=True):
                     nav_to("detail", selected_pedido=int(numero))
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -1010,24 +1039,27 @@ def page_detail():
     total_str  = str(int(total_qty))  if float(total_qty).is_integer()  else str(total_qty)
     st.caption(f"Avance por cantidades: {picked_str} / {total_str} ({pct_qty}%)")
 
-    # ===== ETA =====
+    # ===== ETA (usando reloj de MySQL y fijando inicio de sesión si hace falta) =====
     ts_start, elapsed_min_db, now_ar, ts_start_ar = get_order_timing(numero)
 
+    # Fallbacks si CONVERT_TZ no está disponible
     if now_ar is None:
         try:
             now_ar = datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
         except Exception:
             now_ar = datetime.now()
 
+    # Referencia de inicio para ETA: primero la de sesión, si no la de DB
     start_ref_ar = st.session_state.get(f"eta_start_{numero}") or ts_start_ar
 
+    # Recalcular elapsed con datetimes si tengo ambos; si no, usar el de MySQL
     if start_ref_ar is not None and now_ar is not None:
         elapsed_calc_min = max((now_ar - start_ref_ar).total_seconds() / 60.0, 0.0)
     else:
         elapsed_calc_min = elapsed_min_db if elapsed_min_db is not None else None
 
     if (start_ref_ar is not None) and (picked_qty > 0):
-        elapsed_safe = max(float(elapsed_calc_min or 0), 1.0)
+        elapsed_safe = max(float(elapsed_calc_min or 0), 1.0)  # evita /0 y jitter
         remaining_qty = max(float(total_qty) - float(picked_qty), 0.0)
         eta_minutes = (elapsed_safe * remaining_qty) / float(picked_qty) if remaining_qty > 0 else 0.0
 
@@ -1081,17 +1113,21 @@ def page_detail():
             if st.button("Picking", key=widget_key, type=btn_type, use_container_width=True):
                 # toggle local
                 st.session_state[logical_key] = not active
+
                 # Al pasar a verde por primera vez de la sesión: marco inicio y sello TS en DB
                 if not active:
                     try:
+                        # 1) Fijo inicio de sesión si no existe
                         if st.session_state.get(f"eta_start_{numero}") is None:
                             st.session_state[f"eta_start_{numero}"] = mysql_now_ba() \
                                 or datetime.now(ZoneInfo("America/Argentina/Buenos_Aires"))
+                        # 2) Sello TS en DB si hay nulos
                         conn = get_conn(); cur = conn.cursor()
-                        cur.execute("UPDATE sap SET TS = NOW() WHERE NUMERO = %s AND TS IS NULL", (numero,))
+                        cur.execute("UPDATE sap SET TS = NOW() WHERE NUMERO = %s AND TS IS NULL", (numero,))  # solo pone TS en filas sin TS
                         conn.commit(); cur.close(); conn.close()
                     except Exception:
                         pass
+
                 st.rerun()
 
     # Confirmar
@@ -1100,11 +1136,12 @@ def page_detail():
     with ccf:
         if st.button("Confirmar Picking", key="confirm", use_container_width=True, type="primary"):
             try:
-                # Marca Y en TODOS los ítems del pedido y sella TS para filas sin TS
+                # Marca Y en TODOS los ítems del pedido y sella TS en filas sin TS
                 mark_order_all_items_Y(numero)
 
                 st.success("Picking actualizado (todos los ítems marcados en Y).")
                 st.cache_data.clear()
+                # Limpiar inicio de ETA de la sesión para este pedido
                 st.session_state.pop(f"eta_start_{numero}", None)
                 nav_to("list", selected_pedido=None)
             except Exception as e:
