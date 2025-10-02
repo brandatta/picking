@@ -214,6 +214,17 @@ def get_query_auth() -> str | None:
         return val[0]
     return val
 
+# ================== NAV/STATE HELPERS ==================
+def go(page: str):
+    st.session_state.page = page
+
+def nav_to(page: str, **state):
+    """Navega y forza rerun en la misma interacción (evita 'recarga intermedia')."""
+    for k, v in state.items():
+        st.session_state[k] = v
+    go(page)
+    st.rerun()
+
 # ================== AUTH ==================
 def validar_usuario(username: str, password: str):
     if not username or not password:
@@ -670,10 +681,6 @@ def fmt_duration(minutes: float) -> str:
     h, m = divmod(m, 60)
     return f"{h} h {m} min" if h else f"{m} min"
 
-# ================== STATE HELPERS ==================
-def go(page: str):
-    st.session_state.page = page
-
 # ================== LAYOUT: TOP BAR ==================
 def render_topbar():
     u = st.session_state.user
@@ -747,9 +754,9 @@ def page_list():
                 )
                 st.progress(pct/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct}%)")
+                # Cambio: navegar con rerun inmediato
                 if st.button("Ver detalle", key=f"open_{numero}", use_container_width=True):
-                    st.session_state.selected_pedido = int(numero)
-                    go("detail")
+                    nav_to("detail", selected_pedido=int(numero))
                 st.markdown("</div>", unsafe_allow_html=True)
             idx += 1
 
@@ -794,6 +801,7 @@ def render_team_dashboard():
                 if st.button("Ver pedidos", key=f"ver_{usuario}", use_container_width=True):
                     st.session_state.team_selected_user = usuario
                     go("team_user")
+                    st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
             idx += 1
 
@@ -811,7 +819,7 @@ def page_team_user_orders():
     if not sel:
         st.warning("No hay un usuario seleccionado.")
         if st.button("Volver al equipo", use_container_width=True):
-            go("team")
+            go("team"); st.rerun()
         return
 
     h_left, h_right = st.columns([3,1])
@@ -866,9 +874,9 @@ def page_team_user_orders():
                 )
                 st.progress(pct_card/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct_card}%)")
+                # Cambio: navegar con rerun inmediato
                 if st.button("Ver detalle", key=f"open_user_{sel}_{numero}", use_container_width=True):
-                    st.session_state.selected_pedido = int(numero)
-                    go("detail")
+                    nav_to("detail", selected_pedido=int(numero))
                 st.markdown("</div>", unsafe_allow_html=True)
             i2 += 1
 
@@ -887,13 +895,13 @@ def page_detail():
     if not numero:
         st.warning("No hay pedido seleccionado.")
         if st.button("Volver a pedidos", use_container_width=True):
-            go("list")
+            go("list"); st.rerun()
         return
 
     if not user_can_open_order(numero, uname, role):
         st.error("No tenés acceso a este pedido (usr_pick no coincide con tu usuario).")
         if st.button("Volver a pedidos", use_container_width=True):
-            go("list")
+            go("list"); st.rerun()
         return
 
     left, right = st.columns([3,1])
@@ -902,7 +910,7 @@ def page_detail():
     with right:
         st.write("")
         if st.button("Volver a pedidos", use_container_width=True):
-            go("list")
+            go("list"); st.rerun()
             return
 
     items_df = get_order_items(numero)
