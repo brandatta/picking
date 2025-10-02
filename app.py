@@ -93,7 +93,7 @@ section.main > div { overscroll-behavior: contain; }
 .card h4 { margin: 0 0 6px 0; font-size: 1rem; display:flex; align-items:center; gap:10px; }
 .card small { color: #666; }
 
-/* Badge: círculo verde de completado (más separación del título) */
+/* Badge: círculo verde de avance (más separación del título) */
 .dot-complete {
   display:inline-block; width:12px; height:12px; border-radius:50%;
   background:#28a745; box-shadow: 0 0 0 2px rgba(40,167,69,.15) inset;
@@ -814,11 +814,11 @@ def page_list():
             total_items = len(items)
             picked = (items["PICKING"] == "Y").sum() if total_items > 0 else 0
             pct = int((picked / total_items) * 100) if total_items > 0 else 0
-            all_picked = (total_items > 0 and picked == total_items)
+            has_progress = picked > 0  # círculo si hay al menos una Y
 
             with col:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
-                header_html = f"<h4>{'<span class=\"dot-complete\" title=\"Completado\"></span>' if all_picked else ''}Pedido #{numero}</h4>"
+                header_html = f"<h4>{'<span class=\"dot-complete\" title=\"Con avance\"></span>' if has_progress else ''}Pedido #{numero}</h4>"
                 st.markdown(header_html, unsafe_allow_html=True)
 
                 st.markdown(
@@ -934,11 +934,11 @@ def page_team_user_orders():
             total_items = len(items_df)
             picked = (items_df["PICKING"] == "Y").sum() if total_items > 0 else 0
             pct_card = int((picked/total_items)*100) if total_items > 0 else 0
-            all_picked = (total_items > 0 and picked == total_items)
+            has_progress = picked > 0  # círculo si hay al menos una Y
 
             with c:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
-                header_html = f"<h4>{'<span class=\"dot-complete\" title=\"Completado\"></span>' if all_picked else ''}Pedido #{numero}</h4>"
+                header_html = f"<h4>{'<span class=\"dot-complete\" title=\"Con avance\"></span>' if has_progress else ''}Pedido #{numero}</h4>"
                 st.markdown(header_html, unsafe_allow_html=True)
                 st.markdown(
                     f"<div><small>Cliente:</small> <b>{cliente}</b>"
@@ -1100,7 +1100,7 @@ def page_detail():
     with ccf:
         if st.button("Confirmar Picking", key="confirm", use_container_width=True, type="primary"):
             try:
-                # NUEVO: Marcar Y en TODOS los ítems del pedido (aunque no estén tildados)
+                # Marca Y en TODOS los ítems del pedido y sella TS para filas sin TS
                 mark_order_all_items_Y(numero)
 
                 st.success("Picking actualizado (todos los ítems marcados en Y).")
