@@ -90,7 +90,9 @@ section.main > div { overscroll-behavior: contain; }
   overflow: visible;
 }
 .card h4 { margin: 0 0 6px 0; font-size: 1rem; }
-.card small { color: inherit; }
+.card { color: #111 !important; }
+.card h4, .card b, .card small, .card div, .card span { color: #111 !important; }
+
 
 /* Columnas sin recortes */
 div[data-testid="column"] { overflow: visible !important; }
