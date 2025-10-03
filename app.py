@@ -169,46 +169,6 @@ def get_conn():
         port=st.secrets["app_marco_new"].get("port", 3306),
     )
 
-# ================== HELPERS: COLORES POR EMPRESA ==================
-@st.cache_data(ttl=300)
-def get_color_map() -> dict[str, str]:
-    """
-    Devuelve un dict {EMPRESA_UPPER: '#HEX'} desde la tabla sap_color.
-    """
-    conn = get_conn(); cur = conn.cursor()
-    try:
-        cur.execute("SELECT empresa, hexa FROM sap_color")
-        rows = cur.fetchall()
-    finally:
-        cur.close(); conn.close()
-
-    cmap = {}
-    for emp, hx in rows:
-        if emp is None or hx is None:
-            continue
-        key = str(emp).strip().upper()
-        val = str(hx).strip()
-        cmap[key] = val if val.startswith("#") else f"#{val}"
-    return cmap
-
-def _hex_to_rgb(hexcolor: str) -> tuple[int, int, int]:
-    h = hexcolor.lstrip("#")
-    if len(h) == 3:
-        h = "".join(c*2 for c in h)
-    try:
-        return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
-    except Exception:
-        return (255, 255, 255)
-
-def _pick_text_color(bg_hex: str) -> str:
-    """
-    Elige #000 o #fff según luminancia para contrastar con el fondo.
-    """
-    r, g, b = _hex_to_rgb(bg_hex)
-    # luminancia relativa aproximada
-    luminance = (0.2126*r + 0.7152*g + 0.0722*b) / 255.0
-    return "#000000" if luminance > 0.6 else "#ffffff"
-
 # ================== HELPERS USUARIOS (DB) ==================
 def ensure_usuarios_table():
     conn = get_conn(); cur = conn.cursor()
@@ -288,7 +248,7 @@ def parse_auth_token(token_b64: str):
         username, role, ts, sig = parts
         payload = f"{username}|{role}|{ts}"
         if hmac.compare_digest(_sign(payload), sig):
-            # Expiración (12h). Ajustá si querés.
+            # Expiración (12h)
             if (time.time() - int(ts)) > 12*3600:
                 return None
             return {"username": username, "rol": role, "ts": int(ts)}
@@ -552,7 +512,6 @@ def require_login():
         if tok:
             data = parse_auth_token(tok)
             if data:
-                # verifico que el usuario siga existiendo y recupero sus datos
                 try:
                     conn = get_conn(); cur = conn.cursor(dictionary=True)
                     cur.execute(
@@ -566,13 +525,10 @@ def require_login():
                 except Exception:
                     pass
 
-    # Si ya hay usuario (por token o login normal), mostramos app
     if st.session_state.user is not None:
-        # picker no puede quedar en páginas restringidas
         if get_user_role() == "picker" and st.session_state.page in ("team", "team_user"):
             st.session_state.page = "list"
 
-        # Rehidrata navegación desde la URL (soporta refresh / pull-to-refresh)
         page_qp, pedido_qp = _nav_from_qp()
         if page_qp:
             st.session_state.page = page_qp
@@ -618,7 +574,6 @@ def require_login():
         user = validar_usuario(username, password)
         if user:
             st.session_state.user = user
-            # emitir token y guardarlo en la URL para autologin tras refresh
             t = issue_auth_token(user["username"], user.get("rol",""))
             set_query_auth(t)
             st.success(f"Bienvenido {user.get('nombre') or user['username']} ({user.get('rol','')})")
@@ -632,34 +587,91 @@ def require_login():
 def get_orders(buscar: str | None = None,
                current_username: str | None = None,
                current_role: str | None = None) -> pd.DataFrame:
+    """
+    Trae pedidos (uno por NUMERO) + empresa + color_val desde sap_color.color.
+    La unión normaliza empresa con UPPER(TRIM(...)).
+    """
     params = []
     if current_role == "picker":
-        base = "SELECT DISTINCT NUMERO, CLIENTE, rs, empresa AS empresa FROM sap WHERE usr_pick = %s"
+        base = """
+        SELECT
+            s.NUMERO,
+            s.CLIENTE,
+            MAX(s.rs)      AS rs,
+            MAX(s.empresa) AS empresa,
+            MAX(sc.color)  AS color_val
+        FROM sap s
+        LEFT JOIN sap_color sc
+            ON UPPER(TRIM(sc.empresa)) = UPPER(TRIM(s.empresa))
+        WHERE s.usr_pick = %s
+        """
         params.append(current_username)
         if buscar:
-            base += " AND (CAST(NUMERO AS CHAR) LIKE %s OR CLIENTE LIKE %s OR CAST(rs AS CHAR) LIKE %s)"
-            params.extend([f\"%{buscar}%\", f\"%{buscar}%\", f\"%{buscar}%\"])
-        q = base + " ORDER BY NUMERO DESC LIMIT 150"
+            base += """
+              AND (
+                    CAST(s.NUMERO AS CHAR) LIKE %s
+                 OR s.CLIENTE LIKE %s
+                 OR CAST(s.rs AS CHAR) LIKE %s
+                 OR s.empresa LIKE %s
+              )
+            """
+            params.extend([f"%{buscar}%", f"%{buscar}%", f"%{buscar}%", f"%{buscar}%"])
+        base += " GROUP BY s.NUMERO, s.CLIENTE"
+        q = base + " ORDER BY s.NUMERO DESC LIMIT 150"
     else:
-        base = "SELECT DISTINCT NUMERO, CLIENTE, usr_pick, rs, empresa AS empresa FROM sap"
+        base = """
+        SELECT
+            s.NUMERO,
+            s.CLIENTE,
+            MAX(s.usr_pick) AS usr_pick,
+            MAX(s.rs)       AS rs,
+            MAX(s.empresa)  AS empresa,
+            MAX(sc.color)   AS color_val
+        FROM sap s
+        LEFT JOIN sap_color sc
+            ON UPPER(TRIM(sc.empresa)) = UPPER(TRIM(s.empresa))
+        """
         where = []
         if buscar:
-            where.append("(CAST(NUMERO AS CHAR) LIKE %s OR CLIENTE LIKE %s OR CAST(rs AS CHAR) LIKE %s)")
-            params.extend([f\"%{buscar}%\", f\"%{buscar}%\", f\"%{buscar}%\"])
-        q = base + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY NUMERO DESC LIMIT 150"
+            where.append("""
+              ( CAST(s.NUMERO AS CHAR) LIKE %s
+                OR s.CLIENTE LIKE %s
+                OR CAST(s.rs AS CHAR) LIKE %s
+                OR s.empresa LIKE %s )
+            """)
+            params.extend([f"%{buscar}%", f"%{buscar}%", f"%{buscar}%", f"%{buscar}%"])
+        q = base + (" WHERE " + " AND ".join(where) if where else "")
+        q += " GROUP BY s.NUMERO, s.CLIENTE ORDER BY s.NUMERO DESC LIMIT 150"
 
     conn = get_conn()
     df = pd.read_sql(q, conn, params=params)
     conn.close()
 
+    # Normalizaciones
     if "CLIENTE" in df.columns:
         df["CLIENTE"] = df["CLIENTE"].apply(
             lambda x: str(int(x)) if isinstance(x, (int, float)) and float(x).is_integer() else str(x)
         )
-    if "rs" in df.columns:
-        df["rs"] = df["rs"].apply(lambda x: "" if x is None else str(x))
-    if "empresa" in df.columns:
-        df["empresa"] = df["empresa"].apply(lambda x: "" if x is None else str(x))
+    for col in ("rs", "empresa", "color_val"):
+        if col in df.columns:
+            df[col] = df[col].apply(lambda x: "" if x is None else str(x))
+
+    # Asegurar formato utilizable: si parece HEX de 6 dígitos, anteponer '#'.
+    if "color_val" in df.columns:
+        def _norm_color(c):
+            if not c:
+                return ""
+            c = c.strip()
+            # Si ya trae # o es un nombre CSS, lo dejo como está;
+            # si son 6 hex (p.ej. FFAA00), agrego '#'
+            if c.startswith("#"):
+                return c
+            import re
+            if re.fullmatch(r"[0-9a-fA-F]{6}", c):
+                return f"#{c}"
+            return c  # nombre CSS u otro formato compatible
+        df["color_val"] = df["color_val"].apply(_norm_color)
+
     return df
 
 def user_can_open_order(numero: int, current_username: str, current_role: str) -> bool:
@@ -675,7 +687,8 @@ def get_order_items(numero: int) -> pd.DataFrame:
     conn = get_conn()
     df = pd.read_sql(
         """
-        SELECT NUMERO, CLIENTE, CODIGO, ItemName, CANTIDAD, COALESCE(PICKING, 'N') AS PICKING, TS
+        SELECT NUMERO, CLIENTE, CODIGO, ItemName, CANTIDAD,
+               COALESCE(PICKING, 'N') AS PICKING, TS
         FROM sap
         WHERE NUMERO = %s
         ORDER BY CODIGO
@@ -707,15 +720,11 @@ def update_picking_bulk(numero: int, sku_to_flag: list[tuple[str, str]]):
     cur.close(); conn.close()
 
 def mark_order_all_items_Y(numero: int):
-    """Marca Y en TODOS los ítems del pedido, sella TS en filas sin TS
-    y registra el timestamp de confirmación en ts_c."""
+    """Marca Y en TODOS los ítems del pedido, sella TS en filas sin TS y registra TS_C."""
     conn = get_conn(); cur = conn.cursor()
     try:
-        # 1) Todos los ítems a 'Y'
         cur.execute("UPDATE sap SET PICKING = 'Y' WHERE NUMERO = %s", (numero,))
-        # 2) Sella TS solo donde esté NULL
         cur.execute("UPDATE sap SET TS = NOW() WHERE NUMERO = %s AND TS IS NULL", (numero,))
-        # 3) Marca timestamp de confirmación del pedido (si querés solo primera vez, agregá AND TS_C IS NULL)
         cur.execute("UPDATE sap SET TS_C = NOW() WHERE NUMERO = %s", (numero,))
         conn.commit()
     finally:
@@ -842,6 +851,25 @@ def render_topbar():
             st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
+# Utilidad: texto negro/blanco según fondo
+def _pick_text_color(bg_color: str) -> str:
+    """Recibe #RRGGBB o nombre CSS y decide negro/blanco para contraste."""
+    if not bg_color:
+        return "#000000"
+    if not bg_color.startswith("#"):
+        # Para nombres CSS, usamos negro por defecto (suele funcionar bien)
+        return "#000000"
+    def _hex_to_rgb(hexcolor: str):
+        h = hexcolor.lstrip("#")
+        if len(h) == 3: h = "".join(c*2 for c in h)
+        try:
+            return tuple(int(h[i:i+2], 16) for i in (0,2,4))
+        except Exception:
+            return (0,0,0)
+    r,g,b = _hex_to_rgb(bg_color)
+    luminance = (0.2126*r + 0.7152*g + 0.0722*b) / 255.0
+    return "#000000" if luminance > 0.6 else "#ffffff"
+
 # ================== PÁGINA: LISTA ==================
 def page_list():
     role = get_user_role()
@@ -850,10 +878,9 @@ def page_list():
     st.subheader("Listado de pedidos")
     c1, _ = st.columns([2,1])
     with c1:
-        buscar = st.text_input("Buscar por cliente, número o RS", placeholder="Ej: DIA, 100023120 o RS")
+        buscar = st.text_input("Buscar por cliente, número, RS o empresa", placeholder="Ej: DIA, 100023120, RS o ACME")
 
     orders_df = get_orders(buscar=buscar, current_username=uname, current_role=role)
-    color_map = get_color_map()
 
     st.markdown("**Resultados**")
     if orders_df.empty:
@@ -869,11 +896,11 @@ def page_list():
         for col in cols:
             if idx >= total: break
             row = orders_df.iloc[idx]
-            numero, cliente = row.NUMERO, row.CLIENTE
-            rs_val = str(row["rs"]) if "rs" in orders_df.columns else ""
-            empresa = (row.get("empresa") or "").strip()
-            emp_key = empresa.upper()
-            bg = color_map.get(emp_key)
+            numero  = row.NUMERO
+            cliente = row.CLIENTE
+            rs_val  = str(row.get("rs",""))
+            empresa = str(row.get("empresa","")).strip()
+            bg      = str(row.get("color_val","")).strip() or ""  # <- viene de sap_color.color
             text_color = _pick_text_color(bg) if bg else "#000000"
 
             items = get_order_items(numero)
@@ -882,13 +909,9 @@ def page_list():
             pct = int((picked / total_items) * 100) if total_items > 0 else 0
 
             with col:
-                # Estilo de tarjeta con fondo por empresa y color de texto de alto contraste
-                extra_style = ""
-                if bg:
-                    extra_style = f' style="background:{bg}; color:{text_color}; border-color: rgba(0,0,0,0.08);"'
+                extra_style = f' style="background:{bg}; color:{text_color}; border-color: rgba(0,0,0,0.08);"' if bg else ""
                 st.markdown(f'<div class="card"{extra_style}>', unsafe_allow_html=True)
 
-                # Título con punto verde si hay al menos un Y
                 has_any_y = (items["PICKING"] == "Y").any()
                 title_html = f"<h4 style='color:{text_color};'>Pedido #{numero}"
                 if has_any_y:
@@ -896,7 +919,6 @@ def page_list():
                 title_html += "</h4>"
                 st.markdown(title_html, unsafe_allow_html=True)
 
-                # Línea de datos
                 st.markdown(
                     f"<div style='color:{text_color};'><small>Cliente:</small> <b>{cliente}</b>"
                     + (f" &nbsp;·&nbsp; <small>RS:</small> <b>{rs_val or '-'}</b>" if 'rs' in orders_df.columns else "")
@@ -904,9 +926,9 @@ def page_list():
                     + "</div>",
                     unsafe_allow_html=True
                 )
+
                 st.progress(pct/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct}%)")
-                # Navegar a detalle con sync URL + rerun inmediato
                 if st.button("Ver detalle", key=f"open_{numero}", use_container_width=True):
                     nav_to("detail", selected_pedido=int(numero))
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -990,10 +1012,8 @@ def page_team_user_orders():
         pct = int((qty_picked/qty_total)*100) if qty_total > 0 else 0
         st.caption(f"Avance por cantidades: {int(qty_picked)}/{int(qty_total)} ({pct}%)")
 
-    buscar = st.text_input("Buscar por cliente, número o RS (solo de este usuario)")
+    buscar = st.text_input("Buscar por cliente, número, RS o empresa (solo de este usuario)")
     odf = get_orders(buscar=buscar, current_username=sel, current_role="picker")
-    color_map = get_color_map()
-
     if odf.empty:
         st.info("No hay pedidos para este usuario.")
         c1, c2 = st.columns([1,1])
@@ -1009,11 +1029,11 @@ def page_team_user_orders():
         for c in cols2:
             if i2 >= t2: break
             row = odf.iloc[i2]
-            numero, cliente = row.NUMERO, row.CLIENTE
-            rs_val = str(row["rs"]) if "rs" in odf.columns else ""
-            empresa = (row.get("empresa") or "").strip()
-            emp_key = empresa.upper()
-            bg = color_map.get(emp_key)
+            numero  = row.NUMERO
+            cliente = row.CLIENTE
+            rs_val  = str(row.get("rs",""))
+            empresa = str(row.get("empresa","")).strip()
+            bg      = str(row.get("color_val","")).strip() or ""  # <- viene de sap_color.color
             text_color = _pick_text_color(bg) if bg else "#000000"
 
             items_df = get_order_items(numero)
@@ -1022,12 +1042,9 @@ def page_team_user_orders():
             pct_card = int((picked/total_items)*100) if total_items > 0 else 0
 
             with c:
-                extra_style = ""
-                if bg:
-                    extra_style = f' style="background:{bg}; color:{text_color}; border-color: rgba(0,0,0,0.08);"'
+                extra_style = f' style="background:{bg}; color:{text_color}; border-color: rgba(0,0,0,0.08);"' if bg else ""
                 st.markdown(f'<div class="card"{extra_style}>', unsafe_allow_html=True)
 
-                # Título con punto verde si hay al menos un Y
                 has_any_y = (items_df["PICKING"] == "Y").any()
                 title_html = f"<h4 style='color:{text_color};'>Pedido #{numero}"
                 if has_any_y:
@@ -1045,7 +1062,6 @@ def page_team_user_orders():
 
                 st.progress(pct_card/100 if total_items>0 else 0.0)
                 st.caption(f"Picking: {picked}/{total_items} ({pct_card}%)")
-                # Navegar a detalle con sync URL + rerun inmediato
                 if st.button("Ver detalle", key=f"open_user_{sel}_{numero}", use_container_width=True):
                     nav_to("detail", selected_pedido=int(numero))
                 st.markdown("</div>", unsafe_allow_html=True)
@@ -1205,7 +1221,7 @@ def page_detail():
     with ccf:
         if st.button("Confirmar Picking", key="confirm", use_container_width=True, type="primary"):
             try:
-                # Marca Y en TODOS los ítems del pedido, sella TS y registra TS_C
+                # Marca Y en TODOS los ítems, sella TS donde falte y deja TS_C del pedido
                 mark_order_all_items_Y(numero)
 
                 st.success("Picking actualizado (todos los ítems marcados en Y).")
