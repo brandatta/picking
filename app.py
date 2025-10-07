@@ -517,6 +517,53 @@ def get_distinct_users() -> list[str]:
     cur.close(); conn.close()
     return rows
 
+@st.cache_data(ttl=30)
+def get_user_progress() -> pd.DataFrame:
+    """
+    Avance por usuario (usr_pick):
+      - usuario: TRIM(sap.usr_pick)
+      - pedidos: COUNT(DISTINCT NUMERO)
+      - items: COUNT(*)
+      - qty_total: SUM(CANTIDAD)
+      - qty_picked: SUM(CANTIDAD) donde PICKING='Y'
+    Solo considera usr_pick no vacíos.
+    """
+    conn = get_conn()
+    try:
+        sql = """
+            SELECT
+                TRIM(COALESCE(usr_pick,'')) AS usuario,
+                COUNT(DISTINCT NUMERO)      AS pedidos,
+                COUNT(*)                    AS items,
+                SUM(COALESCE(CAST(CANTIDAD AS DECIMAL(18,3)),0)) AS qty_total,
+                SUM(
+                    CASE
+                        WHEN UPPER(COALESCE(PICKING,'N')) = 'Y'
+                             THEN COALESCE(CAST(CANTIDAD AS DECIMAL(18,3)),0)
+                        ELSE 0
+                    END
+                ) AS qty_picked
+            FROM sap
+            WHERE TRIM(COALESCE(usr_pick,'')) <> ''
+            GROUP BY TRIM(COALESCE(usr_pick,''))
+            ORDER BY usuario
+        """
+        df = pd.read_sql(sql, conn)
+    finally:
+        conn.close()
+
+    # Normalizo tipos
+    for c in ("pedidos", "items"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+    for c in ("qty_total", "qty_picked"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["usuario","pedidos","items","qty_total","qty_picked"])
+    return df
+
 def get_order_items(numero: int) -> pd.DataFrame:
     conn = get_conn()
     df = pd.read_sql(
@@ -628,7 +675,6 @@ def render_topbar():
     with c1:
         st.title("VicborDraft")
     with csp:
-        # Dejo los botones (el Team sigue siendo para admin/jefe)
         n1, n2 = st.columns(2)
         n1.button("Pedidos", on_click=go_and_sync, args=("list",), use_container_width=True)
         n2.button("Equipo",  on_click=go_and_sync, args=("team",), use_container_width=True)
@@ -971,9 +1017,8 @@ def page_detail():
 if require_login():
     render_topbar()
 
-    # El panel de usuarios queda solo para admin
+    # (Opcional) Panel de administración — reservado a admin
     if st.session_state.get("user", {}).get("rol") == "admin":
-        # lo dejo disponible por si lo usás; no lo quité del código original
         pass
 
     if st.session_state.page == "list":
